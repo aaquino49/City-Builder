@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixel Dominion</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IM+Fell+English+SC&family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=VT323&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="game-container">
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Dev FPS overlay (quiet, top-left) -->
+    <div id="stats-counter"></div>
+
+    <!-- Day / Season indicator (top-left) -->
+    <div id="day-season">
+        <div class="day-col">
+            <div class="day-label">DAY</div>
+            <span id="day-phase-glyph" style="font-size:1.1em;line-height:1;display:block;text-align:center;">☀</span>
+            <div id="day-num" class="day-num">1</div>
+        </div>
+        <div class="season-col">
+            <span id="season-glyph" class="season-glyph">✿</span>
+            <div>
+                <div class="season-label">SEASON</div>
+                <div id="season-name" class="season-name">Spring</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Raid Banner (top-center, hanging scroll) -->
+    <div id="raid-banner-wrap">
+        <div class="raid-cords">
+            <div class="raid-cord"></div>
+            <div class="raid-cord"></div>
+        </div>
+        <div id="raid-scroll">
+            <div id="raid-eyebrow" class="raid-eyebrow">NEXT RAID</div>
+            <div class="raid-timer-row">
+                <div id="raid-wave-indicator" class="raid-wave-indicator">WAVE 1/10</div>
+                <div id="res-raid-timer" class="raid-timer">5:00</div>
+            </div>
+        </div>
+        <div id="time-controls">
+            <button id="btn-pause" class="time-ctrl-btn" title="Pause (Space)">⏸</button>
+            <button id="btn-doubletime" class="time-ctrl-btn" title="Double Speed (2×)">×2</button>
+        </div>
+    </div>
+
+    <!-- Pause overlay -->
+    <div id="pause-overlay">
+        <div class="pause-message">⏸ PAUSED</div>
+    </div>
+
+    <!-- Corner Icons (top-right) -->
+    <div id="corner-icons">
+        <button id="btn-settings-icon" class="corner-btn" title="Settings">⚙</button>
+        <button id="btn-mute-icon" class="corner-btn" title="Sound">♪</button>
+        <button id="btn-help-icon" class="corner-btn" title="Help">?</button>
+    </div>
+
+    <!-- Settings Drawer (hidden by default) -->
+    <div id="settings-drawer" class="hidden">
+        <div class="drawer-title">SETTINGS</div>
+        <div class="drawer-row">
+            <span class="drawer-label">MASTER</span>
+            <input type="range" id="vol-master" class="parch-slider" min="0" max="100" value="100">
+        </div>
+        <div class="drawer-row">
+            <span class="drawer-label">MUSIC</span>
+            <input type="range" id="vol-music" class="parch-slider" min="0" max="100" value="70">
+        </div>
+        <div class="drawer-row">
+            <span class="drawer-label">SOUND</span>
+            <input type="range" id="vol-sfx" class="parch-slider" min="0" max="100" value="100">
+        </div>
+        <div class="drawer-actions">
+            <button id="btn-save" class="scroll-btn">✎ SAVE CITY</button>
+            <button id="btn-load" class="scroll-btn">⌂ LOAD CITY</button>
+            <button id="btn-mute" class="scroll-btn">♪ MUTE</button>
+            <button id="btn-reset" class="scroll-btn danger">✕ RESET GAME</button>
+        </div>
+        <div class="drawer-shortcuts">
+            <div class="shortcut-line">1–9 Build · 0 Demolish · ESC Cancel</div>
+            <div class="shortcut-line">TAB Stats · M Music · N SFX</div>
+        </div>
+    </div>
+
+    <!-- Build Menu (right panel) -->
+    <div id="build-menu">
+        <div id="build-header">BUILD</div>
+        <div id="build-tabs">
+            <button class="build-tab active" data-tab="all">ALL</button>
+            <button class="build-tab" data-tab="civic">CIVIC</button>
+            <button class="build-tab" data-tab="industry">CRAFT</button>
+            <button class="build-tab" data-tab="military">WAR</button>
+        </div>
+        <div id="build-items"><!-- populated by JS --></div>
+    </div>
+
+    <!-- Bottom HUD Bar -->
+    <div id="hud-bar">
+        <div class="hud-pod" id="pod-treasury">
+            <div class="pod-label">TREASURY</div>
+            <div class="pod-chips">
+                <div class="res-chip">
+                    <span class="chip-icon gold-icon">◈</span>
+                    <div>
+                        <div class="chip-label">GOLD</div>
+                        <div class="chip-value treasure" id="res-gold">200</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="hud-pod" id="pod-stockpile">
+            <div class="pod-label">STOCKPILE</div>
+            <div class="pod-chips">
+                <div class="res-chip">
+                    <span class="chip-icon wood-icon">◆</span>
+                    <div>
+                        <div class="chip-label">WOOD</div>
+                        <div class="chip-value" id="res-wood">100</div>
+                    </div>
+                </div>
+                <div class="res-chip">
+                    <span class="chip-icon stone-icon">⬟</span>
+                    <div>
+                        <div class="chip-label">STONE</div>
+                        <div class="chip-value" id="res-stone">50</div>
+                    </div>
+                </div>
+                <div class="res-chip">
+                    <span class="chip-icon iron-icon">◇</span>
+                    <div>
+                        <div class="chip-label">IRON</div>
+                        <div class="chip-value" id="res-iron">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="hud-pod" id="pod-hearth">
+            <div class="pod-label">HEARTH</div>
+            <div class="pod-chips">
+                <div class="res-chip">
+                    <span class="chip-icon citizen-icon">☉</span>
+                    <div>
+                        <div class="chip-label">FOLK</div>
+                        <div class="chip-value" id="res-citizens">0</div>
+                    </div>
+                </div>
+                <div class="res-chip">
+                    <span class="chip-icon food-icon">❧</span>
+                    <div>
+                        <div class="chip-label">FOOD</div>
+                        <div class="chip-value" id="res-food">0</div>
+                    </div>
+                </div>
+                <div class="res-chip">
+                    <span class="chip-icon happy-icon">♥</span>
+                    <div>
+                        <div class="chip-label">JOY</div>
+                        <div class="chip-value" id="res-happiness">100%</div>
+                    </div>
+                    <div id="happiness-tooltip" style="display:none;position:absolute;bottom:100%;left:50%;transform:translateX(-50%);min-width:160px;background:#1a1208;border:1px solid #c8a84b;border-radius:3px;padding:6px 8px;z-index:999;pointer-events:none;margin-bottom:4px;"></div>
+                </div>
+            </div>
+        </div>
+        <div class="hud-pod last" id="pod-garrison">
+            <div class="pod-label">GARRISON</div>
+            <div class="pod-chips">
+                <div class="res-chip">
+                    <span class="chip-icon defense-icon">⬡</span>
+                    <div>
+                        <div class="chip-label">DEF</div>
+                        <div class="chip-value" id="res-defense">0</div>
+                    </div>
+                </div>
+                <div class="res-chip">
+                    <span class="chip-icon sword-icon">⚔</span>
+                    <div>
+                        <div class="chip-label">SOL</div>
+                        <div class="chip-value" id="res-soldiers">0</div>
+                    </div>
+                </div>
+                <div class="res-chip">
+                    <span class="chip-icon bow-icon">⌒</span>
+                    <div>
+                        <div class="chip-label">ARC</div>
+                        <div class="chip-value" id="res-archers">0</div>
+                    </div>
+                </div>
+                <div class="res-chip">
+                    <span class="chip-icon knight-icon">♞</span>
+                    <div>
+                        <div class="chip-label">KNT</div>
+                        <div class="chip-value" id="res-knights">0</div>
+                    </div>
+                </div>
+            </div>
+            <div id="combat-mode-btns">
+                <button id="btn-defend-mode" class="combat-mode-btn active">🛡 DEFEND</button>
+                <button id="btn-attack-mode" class="combat-mode-btn">⚔ ATTACK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden compatibility spans (referenced by JS but not shown in new HUD) -->
+    <span id="res-housing" style="display:none">0</span>
+
+    <!-- Raid Warning vignette (full-screen) -->
+    <div id="raid-warning"></div>
+
+    <!-- Event Banner (top-center, slide-in) -->
+    <div id="event-banner">
+        <div class="event-wine-bar"></div>
+        <div class="event-content">
+            <div class="event-seal">✺</div>
+            <div>
+                <div id="event-banner-title" class="event-title"></div>
+                <div id="event-banner-desc" class="event-desc"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats Overlay (TAB key) -->
+    <div id="stats-overlay"></div>
+
+    <!-- Tutorial Overlay (first 3 minutes) -->
+    <div id="tutorial-overlay" class="tutorial-overlay hidden">
+        <div class="tutorial-box">
+            <div id="tutorial-page-1" class="tutorial-page active">
+            <div class="tutorial-title">WELCOME, RULER</div>
+            <div class="tutorial-tips">
+                <div class="tutorial-tip">📋 Build 1 <strong>HOUSE</strong> to attract settlers</div>
+                <div class="tutorial-tip">🌾 Build 1 <strong>FARM</strong> to feed your people</div>
+                <div class="tutorial-tip">🗺️ Click terrain to place buildings (right panel)</div>
+            </div>
+            </div>
+            <div id="tutorial-page-2" class="tutorial-page hidden">
+                <div class="tutorial-title">PATHS TO VICTORY</div>
+                <div class="tutorial-tips">
+                    <div class="tutorial-tip">Build the <strong>MONUMENT</strong></div>
+                    <div class="tutorial-tip">Survive <strong>WAVE 10</strong>, the final raid</div>
+                </div>
+            </div>
+            <div class="tutorial-actions">
+                <button id="tutorial-dismiss" class="scroll-btn hidden">UNDERSTAND</button>
+                <button id="tutorial-next" class="scroll-btn wine">NEXT</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Trade Modal -->
+    <div id="trade-modal" class="modal-overlay">
+        <div class="modal-parchment">
+            <div class="trade-header">
+                <div class="trade-seal">✦</div>
+                <div>
+                    <div class="trade-title">WANDERING MERCHANT</div>
+                    <div class="trade-subtitle">A trader arrives at your gates</div>
+                </div>
+            </div>
+            <div id="trade-deals"></div>
+            <div class="trade-footer">
+                <button id="trade-close" class="scroll-btn wine">FAREWELL</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Territory Expansion Banner -->
+    <div id="expansion-banner">TERRITORY EXPANDED!</div>
+
+    <!-- Auto-save Banner -->
+    <div id="autosave-banner">AUTO-SAVING...</div>
+
+    <!-- Defeat Warning Banner -->
+    <div id="defeat-warning" class="hidden">
+        <div class="defeat-warning-box">
+            <div class="defeat-warning-title">NO FOLK REMAINING!</div>
+            <div id="defeat-warning-timer" class="defeat-warning-timer">Defeat in 10.0s</div>
+        </div>
+    </div>
+
+    <!-- Raid Results Modal -->
+    <div id="raid-modal" class="modal-overlay">
+        <div class="modal-parchment raid-modal-box">
+            <div class="raid-modal-top">
+                <div id="raid-seal" class="raid-wax-seal">✗</div>
+                <div id="modal-title" class="raid-modal-title"></div>
+                <div id="raid-subtitle" class="raid-modal-subtitle"></div>
+            </div>
+            <div id="modal-body" class="raid-modal-ledger"></div>
+            <div class="raid-modal-footer">
+                <button id="modal-continue" class="scroll-btn wine">CONTINUE</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Research Modal -->
+    <div id="research-modal" class="modal-overlay">
+        <div class="modal-parchment research-modal-box">
+            <div class="research-header">
+                <div class="research-seal">❂</div>
+                <div>
+                    <div class="research-title">ACADEMY OF SCIENCES</div>
+                    <div class="research-subtitle">Unlock advanced technologies for your dominion</div>
+                </div>
+                <button id="btn-research-close" class="research-close-x">×</button>
+            </div>
+            <div id="research-upgrades-list">
+                <!-- Research upgrade cards populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Game Over / Victory / Defeat Modal -->
+    <div id="game-over-modal" class="modal-overlay">
+        <div class="modal-parchment game-over-box">
+            <div class="game-over-top">
+                <div id="game-over-seal" class="game-over-wax-seal">✺</div>
+                <h1 id="game-over-title" class="game-over-title">VICTORY ACHIEVED!</h1>
+                <div id="game-over-subtitle" class="game-over-subtitle">Your dominion stands triumphant.</div>
+            </div>
+            <div id="game-over-stats" class="game-over-stats-ledger">
+                <!-- Days Survived, Citizens, Gold Collected, etc. -->
+            </div>
+            
+            <!-- Leaderboard Score Entry -->
+            <div id="leaderboard-entry-panel" class="hidden">
+                <div class="entry-message">A LEGENDARY REIGN! Enter your name in the high scores:</div>
+                <div class="entry-row">
+                    <input type="text" id="leaderboard-name-input" maxlength="20" placeholder="King Arthur">
+                    <button id="leaderboard-submit-btn" class="scroll-btn wine">SUBMIT</button>
+                </div>
+            </div>
+
+            <!-- Leaderboard Display -->
+            <div class="leaderboard-container">
+                <div class="leaderboard-title">HIGH SCORE LEADERBOARD</div>
+                <table id="leaderboard-table">
+                    <thead>
+                        <tr>
+                            <th>RANK</th>
+                            <th>RULER</th>
+                            <th>DAYS</th>
+                            <th>RAIDERS</th>
+                            <th>GOLD</th>
+                            <th>SCORE</th>
+                        </tr>
+                    </thead>
+                    <tbody id="leaderboard-body">
+                        <!-- Filled by JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="game-over-footer">
+                <button id="game-over-restart" class="scroll-btn wine">✦ RESTART REIGN</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Diplomacy Modal -->
+    <div id="diplomacy-modal" class="modal-overlay">
+        <div class="modal-parchment diplomacy-modal-box">
+            <div class="diplomacy-eyebrow">ENVOY EVENT</div>
+            <div id="diplomacy-desc" class="diplomacy-desc"></div>
+            <div class="diplomacy-choices">
+                <button id="diplomacy-option-a" class="diplomacy-choice-btn"></button>
+                <button id="diplomacy-option-b" class="diplomacy-choice-btn"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Building Inspector Panel -->
+    <div id="building-panel" class="hidden">
+        <button id="building-panel-close" class="panel-close-btn">✕</button>
+        <div id="building-panel-name" class="panel-name"></div>
+        <div id="building-panel-stats" class="panel-stats"></div>
+        <button id="building-panel-upgrade" class="panel-btn panel-btn-upgrade hidden">Upgrade</button>
+        <button id="building-panel-demolish" class="panel-btn panel-btn-demolish">⛏ Demolish</button>
+    </div>
+
+    <!-- Start Screen -->
+    <div id="start-screen">
+        <div class="start-vignette"></div>
+        <div class="start-center">
+            <div class="start-eyebrow">OF KEEP &amp; KINGDOM</div>
+            <img id="start-logo" src="assets/sprites/ui_logo.png" alt="PIXEL DOMINION"
+                 onerror="this.style.display='none'; document.getElementById('start-title').style.display='block';">
+            <h1 id="start-title">PIXEL DOMINION</h1>
+            <div class="start-tagline">BUILD · DEFEND · SURVIVE</div>
+            <p class="start-hints">WASD · Arrows — Pan &nbsp;·&nbsp; Scroll — Zoom &nbsp;·&nbsp; Click — Build</p>
+            <div class="start-difficulty-shell">
+                <div class="start-difficulty-title">CHOOSE YOUR DIFFICULTY</div>
+                <div id="difficulty-options" class="difficulty-options"></div>
+            </div>
+
+            <!-- Start Screen Leaderboard -->
+            <button id="btn-leaderboard-toggle" class="scroll-btn start-leaderboard-btn">⚑ HIGH SCORES</button>
+            <div class="start-leaderboard-container hidden" id="start-leaderboard-container">
+                <div class="leaderboard-title">HIGH SCORE LEADERBOARD</div>
+                <table class="start-leaderboard-table">
+                    <thead>
+                        <tr>
+                            <th>RANK</th>
+                            <th>RULER</th>
+                            <th>DAYS</th>
+                            <th>RAIDERS</th>
+                            <th>GOLD</th>
+                            <th>SCORE</th>
+                        </tr>
+                    </thead>
+                    <tbody id="start-leaderboard-body">
+                        <!-- Filled by JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <button id="btn-start" class="scroll-btn wine start-btn">✦ BEGIN REIGN</button>
+        </div>
+    </div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

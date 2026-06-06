@@ -1,0 +1,2101 @@
+// Pixel Dominion — UI & Renderer Module
+
+// ===================== GAME GRID CLASS =====================
+export let _staticCanvas = null;
+export let _grassCanvas = null;
+
+export class GameGrid {
+    constructor(width = GRID_WIDTH, height = GRID_HEIGHT) {
+        this.width = width;
+        this.height = height;
+        this.camera = { x: 0, y: 0, zoom: 1.0 };
+        this.tiles = this._generateTiles();
+        this.structures = this._initStructures();
+        this._spawnTrees();
+        this._spawnOutcrops();
+    }
+
+    _generateTiles() {
+        const tiles = [];
+        for (let y = 0; y < this.height; y++) {
+            tiles[y] = [];
+            for (let x = 0; x < this.width; x++) {
+                tiles[y][x] = 'tile_grass';
+            }
+        }
+        return tiles;
+    }
+
+    _initStructures() {
+        return Array.from({ length: this.height }, () => new Array(this.width).fill(null));
+    }
+
+    _spawnTrees() {
+        for (let ty = 0; ty < this.height; ty++) {
+            for (let tx = 0; tx < this.width; tx++) {
+                if (this.tiles[ty][tx] === 'tile_grass' && Math.random() < TREE_SPAWN_CHANCE) {
+                    this.structures[ty][tx] = { def: TREE_DEF };
+                }
+            }
+        }
+    }
+
+    _spawnOutcrops() {
+        for (let ty = 0; ty < this.height; ty++) {
+            for (let tx = 0; tx < this.width; tx++) {
+                if (this.tiles[ty][tx] === 'tile_grass' && !this.structures[ty][tx]) {
+                    const r = Math.random();
+                    if (r < STONE_SPAWN_CHANCE) {
+                        this.structures[ty][tx] = { def: STONE_DEP_DEF, hp: 5 };
+                    } else if (r < STONE_SPAWN_CHANCE + IRON_SPAWN_CHANCE) {
+                        this.structures[ty][tx] = { def: IRON_VEIN_DEF, hp: 5 };
+                    }
+                }
+            }
+        }
+    }
+
+    inBounds(tx, ty) {
+        return tx >= 0 && ty >= 0 && tx < this.width && ty < this.height;
+    }
+
+    screenToGrid(screenX, screenY) {
+        const worldX = screenX / this.camera.zoom + this.camera.x;
+        const worldY = screenY / this.camera.zoom + this.camera.y;
+        return {
+            tx: Math.floor(worldX / TILE_SIZE),
+            ty: Math.floor(worldY / TILE_SIZE),
+        };
+    }
+
+    canPlace(tx, ty, w = 1, h = 1) {
+        for (let dy = 0; dy < h; dy++) {
+            for (let dx = 0; dx < w; dx++) {
+                const targetTX = tx + dx;
+                const targetTY = ty + dy;
+                if (!this.inBounds(targetTX, targetTY)) return false;
+                const tile = this.tiles[targetTY][targetTX];
+                if ((tile !== 'tile_grass' && tile !== 'tile_dirt') || this.structures[targetTY][targetTX]) return false;
+            }
+        }
+        return true;
+    }
+
+    place(tx, ty, def) {
+        if (!this.inBounds(tx, ty)) return;
+        const w = def.width || 1;
+        const h = def.height || 1;
+        const entry = { def };
+        this.structures[ty][tx] = entry;
+        for (let dy = 0; dy < h; dy++) {
+            for (let dx = 0; dx < w; dx++) {
+                if (dx === 0 && dy === 0) continue;
+                this.structures[ty + dy][tx + dx] = { def, isChild: true, parentX: tx, parentY: ty };
+            }
+        }
+    }
+
+    demolish(tx, ty) {
+        if (!this.inBounds(tx, ty)) return null;
+        let s = this.structures[ty][tx];
+        if (!s) return null;
+        let parentTX = tx;
+        let parentTY = ty;
+        if (s.isChild) {
+            parentTX = s.parentX;
+            parentTY = s.parentY;
+            s = this.structures[parentTY][parentTX];
+        }
+        if (!s) return null;
+        const w = s.def.width || 1;
+        const h = s.def.height || 1;
+        for (let dy = 0; dy < h; dy++) {
+            for (let dx = 0; dx < w; dx++) {
+                this.structures[parentTY + dy][parentTX + dx] = null;
+            }
+        }
+        return s;
+    }
+
+    render(ctx, assets, { hoverTile = null, selectedTool = null, buildings = {}, citizens = [] } = {}) {
+        const { x: camX, y: camY, zoom } = this.camera;
+        const canvasW = ctx.canvas.width;
+        const canvasH = ctx.canvas.height;
+
+        const startX = Math.max(0, Math.floor(camX / TILE_SIZE));
+        const startY = Math.max(0, Math.floor(camY / TILE_SIZE));
+        const endX = Math.min(this.width - 1, Math.ceil((camX + canvasW / zoom) / TILE_SIZE));
+        const endY = Math.min(this.height - 1, Math.ceil((camY + canvasH / zoom) / TILE_SIZE));
+
+        ctx.save();
+        ctx.setTransform(zoom, 0, 0, zoom, -camX * zoom, -camY * zoom);
+        ctx.imageSmoothingEnabled = false;
+
+        // Draw pre-rendered static background & structures (viewport culled)
+        if (_staticCanvas) {
+            const sx = Math.max(0, camX);
+            const sy = Math.max(0, camY);
+            const sw = Math.min(_staticCanvas.width - sx, canvasW / zoom);
+            const sh = Math.min(_staticCanvas.height - sy, canvasH / zoom);
+            if (sw > 0 && sh > 0) {
+                ctx.drawImage(_staticCanvas, sx, sy, sw, sh, sx, sy, sw, sh);
+            }
+        } else {
+            // Fallback to grass canvas + individual tiles if staticCanvas isn't built yet
+            if (_grassCanvas) ctx.drawImage(_grassCanvas, 0, 0);
+            for (let ty = startY; ty <= endY; ty++) {
+                for (let tx = startX; tx <= endX; tx++) {
+                    const tile = this.tiles[ty][tx];
+                    if (tile === 'tile_grass') continue;
+                    const asset = assets[tile];
+                    if (asset) ctx.drawImage(asset, tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                }
+            }
+        }
+
+        // Draw dynamic / under-construction / active structures on top
+        for (let ty = startY; ty <= endY; ty++) {
+            for (let tx = startX; tx <= endX; tx++) {
+                const s = this.structures[ty][tx];
+                if (!s || s.isChild) continue;
+                const key = s.def.key;
+                
+                const isDynamic = (key === 'monument' || key === 'academy' || key === 'tower' || key === 'ballista_tower' || key === 'gate');
+                const isUnderConstruction = (s.progress ?? 1.0) < 1.0;
+                
+                // If it is static and complete, it was already drawn to staticCanvas
+                if (_staticCanvas && !isDynamic && !isUnderConstruction) {
+                    // Check if it is damaged; if damaged, we still need to draw the HP bar
+                    if (s.hp !== undefined && !window._NON_BURNABLE.has(key)) {
+                        const maxHp = getMaxHP(key);
+                        const hpPct = Math.max(0, s.hp / maxHp);
+                        if (hpPct < 1.0) {
+                            const renderW = (s.def.width || 1) * TILE_SIZE;
+                            const renderH = (s.def.height || 1) * TILE_SIZE;
+                            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                            ctx.fillRect(tx * TILE_SIZE + 1, ty * TILE_SIZE + renderH - 4, renderW - 2, 3);
+                            ctx.fillStyle = hpPct > 0.6 ? '#44cc44' : hpPct > 0.3 ? '#ffaa00' : '#cc2222';
+                            ctx.fillRect(tx * TILE_SIZE + 1, ty * TILE_SIZE + renderH - 4, (renderW - 2) * hpPct, 3);
+                        }
+                    }
+                    continue; 
+                }
+
+                const assetKey = key === 'gate'
+                    ? (s.gateOpen !== false ? 'building_gate_open' : 'building_gate_closed')
+                    : s.def.assetKey;
+                const asset = assets[assetKey];
+                const prog = s.progress ?? 1.0;
+                const w = s.def.width || 1;
+                const h = s.def.height || 1;
+                const renderW = w * TILE_SIZE;
+                const renderH = h * TILE_SIZE;
+                
+                if (asset) {
+                    if (prog < 1.0) ctx.globalAlpha = 0.4 + prog * 0.6;
+                    ctx.drawImage(asset, tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
+                    ctx.globalAlpha = 1.0;
+                } else {
+                    ctx.fillStyle = s.def.color;
+                    ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
+                }
+                
+                if (prog < 1.0) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                    ctx.fillRect(tx * TILE_SIZE + 2, ty * TILE_SIZE + renderH - 6, renderW - 4, 4);
+                    ctx.fillStyle = '#ffdd57';
+                    ctx.fillRect(tx * TILE_SIZE + 2, ty * TILE_SIZE + renderH - 6, (renderW - 4) * prog, 4);
+                } else if (s.hp !== undefined && !window._NON_BURNABLE.has(key)) {
+                    const maxHp = getMaxHP(key);
+                    const hpPct = Math.max(0, s.hp / maxHp);
+                    if (hpPct < 1.0) {
+                        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                        ctx.fillRect(tx * TILE_SIZE + 1, ty * TILE_SIZE + renderH - 4, renderW - 2, 3);
+                        ctx.fillStyle = hpPct > 0.6 ? '#44cc44' : hpPct > 0.3 ? '#ffaa00' : '#cc2222';
+                        ctx.fillRect(tx * TILE_SIZE + 1, ty * TILE_SIZE + renderH - 4, (renderW - 2) * hpPct, 3);
+                    }
+                } else {
+                    if (key === 'academy' && gameState.activeResearch) {
+                        const progressPct = (15.0 - gameState.activeResearch.timer) / 15.0;
+                        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                        ctx.fillRect(tx * TILE_SIZE + 2, ty * TILE_SIZE - 8, renderW - 4, 4);
+                        ctx.fillStyle = '#ffb300';
+                        ctx.fillRect(tx * TILE_SIZE + 2, ty * TILE_SIZE - 8, (renderW - 4) * progressPct, 4);
+                    }
+                }
+            }
+        }
+
+        // Locked Territory Shading — darken everything outside the territory circle in a
+        // single even-odd fill (outer viewport rect + inner circle hole) instead of testing
+        // and filling each visible tile. Cutout is centered/radiused to match the golden
+        // boundary circle drawn below.
+        const R = 3 + Math.floor((citizens.length + soldiers.length) / 4);
+        const _shadeX = camX - TILE_SIZE, _shadeY = camY - TILE_SIZE;
+        const _shadeW = canvasW / zoom + TILE_SIZE * 2, _shadeH = canvasH / zoom + TILE_SIZE * 2;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+        ctx.beginPath();
+        ctx.rect(_shadeX, _shadeY, _shadeW, _shadeH);
+        ctx.arc(32.5 * TILE_SIZE, 32.5 * TILE_SIZE, R * TILE_SIZE, 0, Math.PI * 2);
+        ctx.fill('evenodd');
+
+        // Golden Boundary Circle
+        ctx.strokeStyle = 'rgba(255, 221, 87, 0.6)';
+        ctx.lineWidth = 2 / zoom;
+        ctx.setLineDash([8, 8]);
+        ctx.shadowColor = 'rgba(255, 221, 87, 0.8)';
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.arc(32.5 * TILE_SIZE, 32.5 * TILE_SIZE, R * TILE_SIZE, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.shadowBlur = 0;
+
+        const visibleCitizens = [];
+        for (const c of citizens) {
+            if (c.state === 'walking' || c._visualMoving) visibleCitizens.push(c);
+            if (visibleCitizens.length >= MAX_CITIZEN_RENDER) break;
+        }
+        if (visibleCitizens.length < MAX_CITIZEN_RENDER) {
+            for (const c of citizens) {
+                if (c.state === 'walking' || c._visualMoving) continue;
+                visibleCitizens.push(c);
+                if (visibleCitizens.length >= MAX_CITIZEN_RENDER) break;
+            }
+        }
+        const citizenAsset = assets['citizen_sprite'];
+        for (const c of visibleCitizens) {
+            const drawX = typeof c.renderX === 'function' ? c.renderX() : c.x;
+            const drawY = typeof c.renderY === 'function' ? c.renderY() : c.y;
+            if (c.job === 'rebel') {
+                // Red tint for rebels
+                ctx.globalAlpha = 0.85;
+                if (citizenAsset) {
+                    ctx.globalCompositeOperation = 'source-over';
+                    ctx.drawImage(citizenAsset, drawX - 8, drawY - 8, 16, 16);
+                    ctx.fillStyle = 'rgba(200,30,30,0.55)';
+                    ctx.beginPath(); ctx.arc(drawX, drawY, 8, 0, Math.PI * 2); ctx.fill();
+                } else {
+                    ctx.fillStyle = '#cc2222';
+                    ctx.beginPath(); ctx.arc(drawX, drawY, 5, 0, Math.PI * 2); ctx.fill();
+                }
+                ctx.globalAlpha = 1.0;
+            } else if (citizenAsset) {
+                ctx.drawImage(citizenAsset, drawX - 8, drawY - 8, 16, 16);
+            } else {
+                ctx.fillStyle = '#ffdd57';
+                ctx.beginPath();
+                ctx.arc(drawX, drawY, 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        if (hoverTile && selectedTool && selectedTool !== 'demolish' && selectedTool !== 'clear' && selectedTool !== 'clear_rubble') {
+            const { tx, ty } = hoverTile;
+            if (this.inBounds(tx, ty)) {
+                const def = buildings[selectedTool];
+                if (def) {
+                    const w = def.width || 1;
+                    const h = def.height || 1;
+                    const renderW = w * TILE_SIZE;
+                    const renderH = h * TILE_SIZE;
+                    ctx.globalAlpha = 0.5;
+                    const asset = assets[def.assetKey];
+                    if (asset) {
+                        ctx.drawImage(asset, tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
+                    } else {
+                        ctx.fillStyle = def.color;
+                        ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
+                    }
+                    ctx.globalAlpha = 1.0;
+                }
+            }
+        }
+
+        if (hoverTile) {
+            const { tx, ty } = hoverTile;
+            if (this.inBounds(tx, ty)) {
+                let w = 1, h = 1;
+                if (selectedTool && buildings[selectedTool]) {
+                    w = buildings[selectedTool].width || 1;
+                    h = buildings[selectedTool].height || 1;
+                }
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2 / zoom;
+                ctx.strokeRect(tx * TILE_SIZE + 1, ty * TILE_SIZE + 1, w * TILE_SIZE - 2, h * TILE_SIZE - 2);
+
+                // Adjacency bonus preview for eligible buildings
+                if (selectedTool === 'farm' || selectedTool === 'lumberyard' || selectedTool === 'quarry' || selectedTool === 'mine' || selectedTool === 'tavern') {
+                    const bonus = getAdjacencyBonus(tx, ty, selectedTool);
+                    if (bonus > 0) {
+                        const unit = selectedTool === 'farm'
+                            ? 'food'
+                            : selectedTool === 'lumberyard'
+                                ? 'wood'
+                                : selectedTool === 'quarry'
+                                    ? 'stone'
+                                    : selectedTool === 'mine'
+                                        ? 'iron'
+                                        : 'happiness';
+                        const label = `+${bonus % 1 === 0 ? bonus : bonus.toFixed(1)} ${unit} adj`;
+                        ctx.save();
+                        ctx.font = `bold ${11 / zoom}px monospace`;
+                        ctx.textAlign = 'center';
+                        ctx.lineWidth = 2 / zoom;
+                        ctx.strokeStyle = '#000';
+                        ctx.fillStyle = '#ffffaa';
+                        const lx = (tx + 0.5) * TILE_SIZE;
+                        const ly = ty * TILE_SIZE - 3 / zoom;
+                        ctx.strokeText(label, lx, ly);
+                        ctx.fillText(label, lx, ly);
+                        ctx.restore();
+                    }
+                }
+            }
+        }
+
+        ctx.restore();
+    }
+}
+
+
+// ===================== TECH & RESEARCH UI =====================
+export function openResearchModal() {
+    window.setGameIsPaused(true);
+    updateResearchModalUI();
+    document.getElementById('research-modal').classList.add('open');
+}
+
+function closeResearchModal() {
+    window.setGameIsPaused(false);
+    document.getElementById('research-modal').classList.remove('open');
+}
+export function updateResearchModalUI() {
+    const listEl = document.getElementById('research-upgrades-list');
+    if (!listEl) return;
+    
+    const UPGRADES_INFO = [
+        {
+            key: 'reinforced_masonry',
+            name: 'Reinforced Masonry',
+            desc: 'Increases all walls and gates max HP by +100.',
+            goldCost: 150,
+            stoneCost: 50,
+            ironCost: 0,
+            woodCost: 0
+        },
+        {
+            key: 'steel_bows',
+            name: 'Steel Bows',
+            desc: 'Increases Archer attack damage by +5.',
+            goldCost: 150,
+            stoneCost: 0,
+            ironCost: 50,
+            woodCost: 0
+        },
+        {
+            key: 'heavy_armor',
+            name: 'Heavy Armor',
+            desc: 'Increases Knight max HP by +50.',
+            goldCost: 200,
+            stoneCost: 0,
+            ironCost: 80,
+            woodCost: 0
+        },
+        {
+            key: 'crop_rotation',
+            name: 'Crop Rotation',
+            desc: 'Increases Farm food yield by +2.',
+            goldCost: 100,
+            stoneCost: 0,
+            ironCost: 0,
+            woodCost: 50
+        },
+        {
+            key: 'ballistic_engineering',
+            name: 'Ballistic Engineering',
+            desc: 'Ballista range +3 tiles, bolt damage +15.',
+            goldCost: 200,
+            stoneCost: 0,
+            ironCost: 50,
+            woodCost: 0
+        },
+        {
+            key: 'iron_discipline',
+            name: 'Iron Discipline',
+            desc: 'Soldiers spawn with +15 max HP (100→115).',
+            goldCost: 150,
+            stoneCost: 0,
+            ironCost: 40,
+            woodCost: 0
+        },
+        {
+            key: 'trade_guilds',
+            name: 'Trade Guilds',
+            desc: 'Tax income +1 gold per citizen per tick.',
+            goldCost: 180,
+            stoneCost: 0,
+            ironCost: 20,
+            woodCost: 0
+        },
+        {
+            key: 'field_medicine',
+            name: 'Field Medicine',
+            desc: 'Military units regenerate HP 2× faster.',
+            goldCost: 150,
+            stoneCost: 0,
+            ironCost: 0,
+            woodCost: 30
+        }
+    ];
+
+    listEl.innerHTML = UPGRADES_INFO.map(upg => {
+        const isUnlocked = gameState.upgrades && gameState.upgrades[upg.key];
+        const isResearching = gameState.activeResearch && gameState.activeResearch.upgradeKey === upg.key;
+        
+        let statusHtml = '';
+        let progressOverlay = '';
+        
+        if (isUnlocked) {
+            statusHtml = '<span class="upgrade-card-status unlocked">✓ UNLOCKED</span>';
+        } else if (isResearching) {
+            const timeRemaining = Math.ceil(gameState.activeResearch.timer);
+            const pct = ((15.0 - gameState.activeResearch.timer) / 15.0) * 100;
+            statusHtml = `<span class="upgrade-card-status researching">RESEARCHING (${timeRemaining}s)</span>`;
+            progressOverlay = `<div class="upgrade-progress-overlay" style="width: ${pct}%"></div>`;
+        } else {
+            const goldOk = gameState.gold >= upg.goldCost;
+            const woodOk = gameState.wood >= upg.woodCost;
+            const stoneOk = gameState.stone >= upg.stoneCost;
+            const ironOk = gameState.iron >= upg.ironCost;
+            const canAfford = goldOk && woodOk && stoneOk && ironOk;
+            const busy = gameState.activeResearch !== null && gameState.activeResearch !== undefined;
+            
+            if (busy) {
+                statusHtml = '<button class="scroll-btn upgrade-card-btn" disabled>QUEUED</button>';
+            } else if (!canAfford) {
+                statusHtml = '<button class="scroll-btn upgrade-card-btn danger" disabled>LOCKED</button>';
+            } else {
+                statusHtml = `<button class="scroll-btn upgrade-card-btn wine" onclick="startResearch('${upg.key}')">RESEARCH</button>`;
+            }
+        }
+
+        const costParts = [];
+        if (upg.goldCost > 0) costParts.push(`<span class="build-cost-gold">◈ ${upg.goldCost}</span>`);
+        if (upg.woodCost > 0) costParts.push(`<span class="build-cost-wood">◆ ${upg.woodCost}</span>`);
+        if (upg.stoneCost > 0) costParts.push(`<span class="build-cost-stone">⬟ ${upg.stoneCost}</span>`);
+        if (upg.ironCost > 0) costParts.push(`<span class="build-cost-iron">◇ ${upg.ironCost}</span>`);
+
+        return `<div class="upgrade-card">
+            ${progressOverlay}
+            <div class="upgrade-card-info">
+                <div class="upgrade-card-name">${upg.name}</div>
+                <div class="upgrade-card-desc">${upg.desc}</div>
+                <div class="upgrade-card-cost">${costParts.join('')}</div>
+            </div>
+            <div class="upgrade-card-action">
+                ${statusHtml}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function startResearch(upgradeKey) {
+    if (gameState.activeResearch) return;
+    
+    const UPGRADES_COSTS = {
+        reinforced_masonry:    { gold: 150, stone: 50, iron: 0,  wood: 0  },
+        steel_bows:            { gold: 150, stone: 0,  iron: 50, wood: 0  },
+        heavy_armor:           { gold: 200, stone: 0,  iron: 80, wood: 0  },
+        crop_rotation:         { gold: 100, stone: 0,  iron: 0,  wood: 50 },
+        ballistic_engineering: { gold: 200, stone: 0,  iron: 50, wood: 0  },
+        iron_discipline:       { gold: 150, stone: 0,  iron: 40, wood: 0  },
+        trade_guilds:          { gold: 180, stone: 0,  iron: 20, wood: 0  },
+        field_medicine:        { gold: 150, stone: 0,  iron: 0,  wood: 30 },
+    };
+    
+    const cost = UPGRADES_COSTS[upgradeKey];
+    if (!cost) return;
+    
+    if (gameState.gold < cost.gold || gameState.wood < cost.wood || gameState.stone < cost.stone || gameState.iron < cost.iron) return;
+    
+    gameState.gold -= cost.gold;
+    gameState.wood -= cost.wood;
+    gameState.stone -= cost.stone;
+    gameState.iron -= cost.iron;
+    
+    gameState.activeResearch = {
+        upgradeKey,
+        timer: 15.0
+    };
+    
+    playBuildSFX();
+    refreshUI();
+    updateResearchModalUI();
+}
+
+function updateResearch(dtSec) {
+    if (!gameState.activeResearch) return;
+    
+    gameState.activeResearch.timer = Math.max(0, gameState.activeResearch.timer - dtSec);
+    if (gameState.activeResearch.timer <= 0) {
+        const key = gameState.activeResearch.upgradeKey;
+        gameState.upgrades[key] = true;
+        gameState.activeResearch = null;
+        
+        applyUpgradeEffects(key);
+        playResearchCompleteSFX();
+        refreshUI();
+        updateResearchModalUI();
+    }
+}
+
+function applyUpgradeEffects(key) {
+    if (key === 'reinforced_masonry') {
+        for (let ty = 0; ty < grid.height; ty++) {
+            for (let tx = 0; tx < grid.width; tx++) {
+                const s = grid.structures[ty][tx];
+                if (s) {
+                    if (s.def.key === 'wall') {
+                        s.hp = (s.hp ?? 100) + 100;
+                    } else if (s.def.key === 'gate') {
+                        s.hp = (s.hp ?? 250) + 100;
+                    }
+                }
+            }
+        }
+    } else if (key === 'heavy_armor') {
+        for (const k of knights) {
+            k.maxHp = 200;
+            k.hp += 50;
+        }
+    } else if (key === 'crop_rotation') {
+        refreshUI();
+    } else if (key === 'ballistic_engineering') {
+        rebuildStructureLists();
+    }
+}
+
+
+// ===================== DIPLOMACY MODAL =====================
+export function showDiplomacyModal(event) {
+    const modal = document.getElementById('diplomacy-modal');
+    if (!modal) return;
+    document.getElementById('diplomacy-desc').textContent = event.description;
+    const btnA = document.getElementById('diplomacy-option-a');
+    const btnB = document.getElementById('diplomacy-option-b');
+    btnA.innerHTML = `<span class="dipl-label">${event.optionA.label}</span><span class="dipl-cost">${event.optionA.cost}</span>`;
+    btnB.innerHTML = `<span class="dipl-label">${event.optionB.label}</span><span class="dipl-cost">${event.optionB.cost}</span>`;
+    btnA.onclick = () => chooseDiplomacyOption('A');
+    btnB.onclick = () => chooseDiplomacyOption('B');
+    modal.classList.add('open');
+}
+
+function chooseDiplomacyOption(opt) {
+    if (!incidentManager || !incidentManager.active || incidentManager.active.type !== 'diplomacy') return;
+    const event = incidentManager.active.event;
+    const choice = opt === 'A' ? event.optionA : event.optionB;
+    choice.apply();
+    incidentManager._endIncident();
+    window.setGameIsPaused(false);
+    const modal = document.getElementById('diplomacy-modal');
+    if (modal) modal.classList.remove('open');
+    refreshUI();
+}
+
+// ===================== BUILDING CLICK PANELS =====================
+export function closeBuildingPanel() {
+    _buildingPanelOpen = false;
+    const panel = document.getElementById('building-panel');
+    if (panel) panel.classList.add('hidden');
+}
+
+function openBuildingPanel(tx, ty) {
+    let s = grid.structures[ty]?.[tx];
+    if (!s) return;
+    if (s.isChild) {
+        tx = s.parentX;
+        ty = s.parentY;
+        s = grid.structures[ty]?.[tx];
+    }
+    if (!s || !BUILDINGS[s.def.key]) return;
+
+    const panel = document.getElementById('building-panel');
+    if (!panel) return;
+
+    _buildingPanelTX = tx;
+    _buildingPanelTY = ty;
+    _buildingPanelOpen = true;
+
+    const bKey = s.def.key;
+    const k2 = `${tx},${ty}`;
+    const isT2 = !!_tier2Upgrades[k2];
+    const seasonIdx = SEASONS.indexOf(gameState.season);
+
+    document.getElementById('building-panel-name').textContent = BUILDINGS[bKey]?.label || bKey;
+
+    const statsLines = [];
+    if (s.hp !== undefined) statsLines.push(`HP: ${Math.ceil(s.hp)} / ${getMaxHP(bKey)}`);
+    if (bKey === 'farm') {
+        const passive = window.PRODUCTION_BALANCE?.farmPassiveFoodPerCycle ?? 1;
+        const cycleSec = window.PRODUCTION_BALANCE?.farmCycleSec ?? 2.0;
+        const farmBaseFood = window.PRODUCTION_BALANCE?.farmBaseFoodPerCycle ?? 6;
+        const base = farmBaseFood * SEASON_MODIFIERS[seasonIdx].foodYieldMult;
+        const crop = gameState.upgrades?.crop_rotation ? 2 : 0;
+        const passiveCrop = gameState.upgrades?.crop_rotation ? 0.5 : 0;
+        const adj  = getAdjacencyBonus(tx, ty, 'farm');
+        const t2   = isT2 ? 2 : 0;
+        statsLines.push(`Passive: +${(passive + passiveCrop).toFixed(1)} / ${cycleSec.toFixed(0)}s`);
+        statsLines.push(`Food: +${(base + crop + adj + t2).toFixed(1)} / 2s`);
+        if (adj > 0) statsLines.push(`Adj bonus: +${adj.toFixed(1)} food`);
+    } else if (bKey === 'lumberyard') {
+        const base = 10 * SEASON_MODIFIERS[seasonIdx].woodYieldMult;
+        const adj  = getAdjacencyBonus(tx, ty, 'lumberyard');
+        const t2   = isT2 ? 2 : 0;
+        statsLines.push(`Wood: +${(base + adj + t2).toFixed(1)} / trip`);
+        if (adj > 0) statsLines.push(`Adj bonus: +${adj.toFixed(0)} wood`);
+    } else if (bKey === 'quarry') {
+        const adj  = getAdjacencyBonus(tx, ty, 'quarry');
+        statsLines.push(`Stone: +${10 + adj} / trip`);
+        if (adj > 0) statsLines.push(`Adj bonus: +${adj.toFixed(0)} stone`);
+    } else if (bKey === 'mine') {
+        const adj  = getAdjacencyBonus(tx, ty, 'mine');
+        const t2   = isT2 ? 2 : 0;
+        statsLines.push(`Iron: +${10 + adj + t2} / trip`);
+        if (adj > 0) statsLines.push(`Adj bonus: +${adj.toFixed(0)} iron`);
+    } else if (bKey === 'granary') {
+        statsLines.push(`Food cap: +${isT2 ? 350 : 200}`);
+    } else if (bKey === 'barracks') {
+        statsLines.push(`Trains soldiers (40G)`);
+        statsLines.push(`Soldier HP: ${isT2 ? 125 : 100}`);
+    } else if (bKey === 'tower') {
+        statsLines.push(`Range: ${isT2 ? 10 : 8} tiles`);
+        statsLines.push(`Damage: ${isT2 ? 30 : 25} / shot`);
+    } else if (bKey === 'house') {
+        statsLines.push(`Housing: +${s.def.housing || 4}`);
+    } else if (bKey === 'tavern') {
+        const adj = getAdjacencyBonus(tx, ty, 'tavern');
+        statsLines.push(`Happiness bonus`);
+        if (adj > 0) statsLines.push(`Adj bonus: +${adj} happiness`);
+    }
+
+    document.getElementById('building-panel-stats').innerHTML = statsLines.map(l => `<div>${l}</div>`).join('');
+
+    const upgradeBtn = document.getElementById('building-panel-upgrade');
+    const upgCfg = TIER2_UPGRADES[bKey];
+    if (upgCfg && !isT2) {
+        const parts = [];
+        if (upgCfg.goldCost)  parts.push(`${upgCfg.goldCost}G`);
+        if (upgCfg.woodCost)  parts.push(`${upgCfg.woodCost}W`);
+        if (upgCfg.stoneCost) parts.push(`${upgCfg.stoneCost}S`);
+        upgradeBtn.textContent = `▲ ${upgCfg.name}: ${parts.join(' ')}`;
+        upgradeBtn.disabled = false;
+        upgradeBtn.classList.remove('hidden', 'panel-btn-upgraded');
+        upgradeBtn.onclick = () => {
+            const ptx = _buildingPanelTX, pty = _buildingPanelTY;
+            const cfg = TIER2_UPGRADES[grid.structures[pty]?.[ptx]?.def.key];
+            if (!cfg) return;
+            if (gameState.gold < cfg.goldCost || gameState.wood < cfg.woodCost || gameState.stone < cfg.stoneCost) {
+                spawnFloat(ptx * TILE_SIZE + TILE_SIZE / 2, pty * TILE_SIZE, 'Insufficient resources!', '#ff4444', 1.2);
+                return;
+            }
+            gameState.gold  -= cfg.goldCost;
+            gameState.wood  -= cfg.woodCost;
+            gameState.stone -= cfg.stoneCost;
+            _tier2Upgrades[`${ptx},${pty}`] = true;
+            rebuildStructureLists();
+            refreshUI();
+            flashAutosave();
+            closeBuildingPanel();
+        };
+    } else if (upgCfg && isT2) {
+        upgradeBtn.textContent = '✓ Tier 2 Applied';
+        upgradeBtn.disabled = true;
+        upgradeBtn.classList.remove('hidden');
+        upgradeBtn.classList.add('panel-btn-upgraded');
+        upgradeBtn.onclick = null;
+    } else {
+        upgradeBtn.classList.add('hidden');
+    }
+
+    const demolishBtn = document.getElementById('building-panel-demolish');
+    demolishBtn.onclick = () => {
+        const ptx = _buildingPanelTX, pty = _buildingPanelTY;
+        const ds = grid.structures[pty]?.[ptx];
+        closeBuildingPanel();
+        if (ds && BUILDINGS[ds.def.key]) {
+            gameState.gold    += Math.floor(getScaledCost(ds.def.key) * 0.5);
+            if (ds.def.key === 'house') gameState.housesBuilt = Math.max(0, (gameState.housesBuilt || 0) - 1);
+            else if (ds.def.key === 'farm') gameState.farmsBuilt = Math.max(0, (gameState.farmsBuilt || 0) - 1);
+            gameState.housing = Math.max(0, gameState.housing - (ds.def.housing || 0));
+            delete _tier2Upgrades[`${ptx},${pty}`];
+            grid.demolish(ptx, pty);
+            grid.structures[pty][ptx] = { def: RUBBLE_DEF, decayTimer: DAY_DURATION };
+            playDemolishSFX();
+            rebuildStructureLists();
+            refreshUI();
+        }
+    };
+
+    // Position panel near the tile, clamped to viewport
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = rect.width  / canvas.width;
+    const scaleY = rect.height / canvas.height;
+    const canvasPxX = (tx * TILE_SIZE + TILE_SIZE) * camera.zoom - camera.x * camera.zoom;
+    const canvasPxY = (ty * TILE_SIZE)             * camera.zoom - camera.y * camera.zoom;
+    const viewX = rect.left + canvasPxX * scaleX + 8;
+    const viewY = rect.top  + canvasPxY * scaleY;
+
+    panel.style.left = Math.min(Math.max(viewX, 4), window.innerWidth  - 210) + 'px';
+    panel.style.top  = Math.min(Math.max(viewY, 4), window.innerHeight - 220) + 'px';
+    panel.classList.remove('hidden');
+}
+
+// ===================== LEADERBOARD & SCORE =====================
+export // ===================== HIGH SCORE LEADERBOARD =====================
+const LEADERBOARD_KEY = 'pixel_dominion_highscores';
+
+function getHighScores() {
+    try {
+        const raw = localStorage.getItem(LEADERBOARD_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch (_) {
+        return [];
+    }
+}
+
+function saveHighScores(scores) {
+    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(scores.slice(0, 5)));
+}
+
+function isHighScore(score) {
+    const scores = getHighScores();
+    if (scores.length < 5) return true;
+    return score > scores[scores.length - 1].score;
+}
+
+function addHighScoreEntry(name, score, day, raiders, gold) {
+    const scores = getHighScores();
+    scores.push({ name, score, day, raiders, gold, date: new Date().toLocaleDateString() });
+    scores.sort((a, b) => b.score - a.score);
+    saveHighScores(scores);
+    updateLeaderboardDisplays();
+}
+
+function updateLeaderboardDisplays() {
+    const scores = getHighScores();
+    
+    const body = document.getElementById('leaderboard-body');
+    if (body) {
+        body.innerHTML = scores.map((s, i) => `<tr>
+            <td>${i + 1}</td>
+            <td class="highlight">${s.name}</td>
+            <td>${s.day}</td>
+            <td>${s.raiders}</td>
+            <td>${s.gold}</td>
+            <td class="highlight">${s.score}</td>
+        </tr>`).join('');
+        for (let i = scores.length; i < 5; i++) {
+            body.innerHTML += `<tr>
+                <td>${i + 1}</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+            </tr>`;
+        }
+    }
+    
+    const startBody = document.getElementById('start-leaderboard-body');
+    if (startBody) {
+        startBody.innerHTML = scores.map((s, i) => `<tr>
+            <td>${i + 1}</td>
+            <td>${s.name}</td>
+            <td>${s.day}</td>
+            <td>${s.raiders}</td>
+            <td>${s.gold}</td>
+            <td>${s.score}</td>
+        </tr>`).join('');
+        for (let i = scores.length; i < 5; i++) {
+            startBody.innerHTML += `<tr>
+                <td>${i + 1}</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+            </tr>`;
+        }
+    }
+}
+
+export function calculateCurrentScore() {
+    const days = gameState.day || 1;
+    const raiders = gameState.raidersDefeated || 0;
+    const gold = gameState.gold || 0;
+    return Math.round(days * 100 + raiders * 20 + gold * 0.1);
+}
+
+export function triggerVictory(reason = 'default') {
+    window.setGameIsPaused(true);
+    playVictorySFX();
+    
+    const days = gameState.day || 1;
+    const citizenCount = citizens.length;
+    const raidersCount = gameState.raidersDefeated || 0;
+    const gold = gameState.gold || 0;
+    const finalScore = calculateCurrentScore();
+    
+    const titleEl = document.getElementById('game-over-title');
+    const subtitleEl = document.getElementById('game-over-subtitle');
+    const sealEl = document.getElementById('game-over-seal');
+    const statsEl = document.getElementById('game-over-stats');
+    const victoryMessages = {
+        monument: {
+            subtitle: 'The Monument is complete. Your dominion will be remembered.',
+            condition: 'Monument completed',
+        },
+        wave10: {
+            subtitle: 'Wave 10 has broken against your defenses. The final raid is survived.',
+            condition: 'Wave 10 survived',
+        },
+        default: {
+            subtitle: 'Your dominion stands triumphant.',
+            condition: 'Victory achieved',
+        },
+    };
+    const victory = victoryMessages[reason] || victoryMessages.default;
+    
+    if (titleEl) titleEl.textContent = "VICTORY ACHIEVED!";
+    if (subtitleEl) subtitleEl.textContent = victory.subtitle;
+    if (sealEl) {
+        sealEl.textContent = "✺";
+        sealEl.className = "game-over-wax-seal victory";
+    }
+    
+    if (statsEl) {
+        statsEl.innerHTML = `
+            <div class="modal-body-line">Victory Condition: <strong>${victory.condition}</strong></div>
+            <div class="modal-body-line">Days Survived: <strong>${days}</strong></div>
+            <div class="modal-body-line">Total Citizens: <strong>${citizenCount}</strong></div>
+            <div class="modal-body-line">Raiders Defeated: <strong>${raidersCount}</strong></div>
+            <div class="modal-body-line">Gold in Vault: <strong>${gold}◈</strong></div>
+            <div class="modal-body-line">Final Score: <strong>${finalScore}</strong></div>
+        `;
+    }
+    
+    const entryPanel = document.getElementById('leaderboard-entry-panel');
+    if (isHighScore(finalScore)) {
+        if (entryPanel) entryPanel.classList.remove('hidden');
+        const nameInput = document.getElementById('leaderboard-name-input');
+        if (nameInput) {
+            nameInput.value = "";
+            nameInput.placeholder = "King/Queen " + Math.floor(Math.random() * 8999 + 1000);
+        }
+    } else {
+        if (entryPanel) entryPanel.classList.add('hidden');
+    }
+    
+    updateLeaderboardDisplays();
+    document.getElementById('game-over-modal').classList.add('open');
+}
+
+function triggerDefeat() {
+    window.setGameIsPaused(true);
+    playDefeatSFX();
+    
+    const days = gameState.day || 1;
+    const raidersCount = gameState.raidersDefeated || 0;
+    const gold = gameState.gold || 0;
+    const finalScore = calculateCurrentScore();
+    
+    const titleEl = document.getElementById('game-over-title');
+    const subtitleEl = document.getElementById('game-over-subtitle');
+    const sealEl = document.getElementById('game-over-seal');
+    const statsEl = document.getElementById('game-over-stats');
+    
+    if (titleEl) titleEl.textContent = "DOMINION FALLEN!";
+    if (subtitleEl) subtitleEl.textContent = "Total collapse: no citizens or defenders remain to carry the dominion forward.";
+    if (sealEl) {
+        sealEl.textContent = "✗";
+        sealEl.className = "game-over-wax-seal defeat";
+    }
+    
+    if (statsEl) {
+        statsEl.innerHTML = `
+            <div class="modal-body-line">Defeat Cause: <strong>Total collapse</strong></div>
+            <div class="modal-body-line">Days Survived: <strong>${days}</strong></div>
+            <div class="modal-body-line">Raiders Defeated: <strong>${raidersCount}</strong></div>
+            <div class="modal-body-line">Gold Gathered: <strong>${gold}◈</strong></div>
+            <div class="modal-body-line">Final Score: <strong>${finalScore}</strong></div>
+        `;
+    }
+    
+    const entryPanel = document.getElementById('leaderboard-entry-panel');
+    if (isHighScore(finalScore)) {
+        if (entryPanel) entryPanel.classList.remove('hidden');
+        const nameInput = document.getElementById('leaderboard-name-input');
+        if (nameInput) {
+            nameInput.value = "";
+            nameInput.placeholder = "King/Queen " + Math.floor(Math.random() * 8999 + 1000);
+        }
+    } else {
+        if (entryPanel) entryPanel.classList.add('hidden');
+    }
+    
+    updateLeaderboardDisplays();
+    document.getElementById('game-over-modal').classList.add('open');
+}
+
+
+// ===================== RAID HUD =====================
+export function updateRaidHUD() {
+    const timerEl = document.getElementById('res-raid-timer');
+    const warnEl  = document.getElementById('raid-warning');
+    const scroll  = document.getElementById('raid-scroll');
+    const eyebrow = document.getElementById('raid-eyebrow');
+    const waveEl  = document.getElementById('raid-wave-indicator');
+    const finalRaidWave = 10;
+    const waveNum = Math.min((window.raidCount ?? 0) + 1, finalRaidWave);
+    if (waveEl) waveEl.textContent = `WAVE ${waveNum}/${finalRaidWave}${waveNum === finalRaidWave ? ' FINAL' : ''}`;
+    if (raidActive) {
+        if (timerEl) timerEl.textContent = formatTime(raidActiveTimer);
+        if (eyebrow) eyebrow.textContent = '⚔ RAID ⚔';
+        if (warnEl)  warnEl.classList.add('active');
+        if (scroll)  scroll.classList.add('warning');
+    } else if (_scoutPhase) {
+        if (timerEl) timerEl.textContent = formatTime(_scoutTimer);
+        if (warnEl)  warnEl.classList.add('active');
+        if (scroll)  scroll.classList.add('warning');
+        if (eyebrow) eyebrow.textContent = '⚑ SCOUTS SPOTTED ⚑';
+    } else {
+        if (timerEl) timerEl.textContent = formatTime(raidTimer);
+        const isWarn = !gameIsPaused && raidTimer <= 30 && raidTimer > 0;
+        if (warnEl)  warnEl.classList.toggle('active', isWarn);
+        if (scroll)  scroll.classList.toggle('warning', isWarn);
+        if (eyebrow) eyebrow.textContent = isWarn ? '⚔ RAID APPROACHES ⚔' : 'NEXT RAID';
+        if (isWarn) {
+            if (!raidWarningPlayed) { window.setRaidWarningPlayed(true); playRaidWarningSFX(); }
+        } else {
+            if (raidTimer > 30 || raidTimer <= 0) window.setRaidWarningPlayed(false);
+        }
+    }
+}
+
+
+// ===================== GENERIC MODAL =====================
+export function showModal(isVictory, lines) {
+    window.setGameIsPaused(true);
+    const sealEl     = document.getElementById('raid-seal');
+    const titleEl    = document.getElementById('modal-title');
+    const subtitleEl = document.getElementById('raid-subtitle');
+    const bodyEl     = document.getElementById('modal-body');
+    if (sealEl) {
+        sealEl.textContent = isVictory ? '✚' : '✗';
+        sealEl.className = 'raid-wax-seal ' + (isVictory ? 'victory' : 'defeat');
+    }
+    if (titleEl) {
+        titleEl.textContent = isVictory ? 'VICTORY' : 'DEFEAT';
+        titleEl.className = 'raid-modal-title ' + (isVictory ? 'victory' : 'defeat');
+    }
+    if (subtitleEl) {
+        subtitleEl.textContent = isVictory
+            ? 'Your walls held strong against the raiders.'
+            : 'The gate has fallen. Rebuild what you can.';
+    }
+    if (bodyEl) bodyEl.innerHTML = lines.map(l => `<div class="modal-body-line">${l}</div>`).join('');
+    document.getElementById('raid-modal').classList.add('open');
+    stopRaidWarningSFX();
+    playRaidResultSFX(isVictory);
+}
+
+
+// ===================== TIME HUD =====================
+export function updateTimePauseUI() {
+    const pauseOverlay = document.getElementById('pause-overlay');
+    const btnPause = document.getElementById('btn-pause');
+    const btnDbl = document.getElementById('btn-doubletime');
+    if (pauseOverlay) pauseOverlay.classList.toggle('active', userPaused);
+    if (btnPause) { btnPause.textContent = userPaused ? '▶' : '⏸'; btnPause.classList.toggle('active', userPaused); }
+    if (btnDbl) btnDbl.classList.toggle('active', timeScale === 2);
+}
+document.getElementById('btn-pause').addEventListener('click', () => {
+    if (!gameState.started || gameIsPaused) return;
+    window.setUserPaused(!window.userPaused);
+    updateTimePauseUI();
+});
+document.getElementById('btn-doubletime').addEventListener('click', () => {
+    window.setTimeScale(window.timeScale === 2 ? 1 : 2);
+    updateTimePauseUI();
+});
+
+
+// ===================== RESOURCE BAR & BUILD MENU =====================
+export // --- UI ---
+function updateResourceUI() {
+    const set = (id, text, cls) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = text;
+        if (cls !== undefined) el.className = 'chip-value' + (cls ? ' ' + cls : '');
+    };
+    set('res-gold',      `${Math.round(gameState.gold)}`, 'treasure');
+    set('res-housing',   gameState.housing);
+    set('res-defense',   gameState.defense);
+    set('res-citizens',  `${citizens.length} / ${gameState.housing}`);
+    set('res-soldiers',  soldiers.length);
+    const archersEl = document.getElementById('res-archers');
+    const knightsEl = document.getElementById('res-knights');
+    if (archersEl) archersEl.textContent = archers.length;
+    if (knightsEl) knightsEl.textContent = knights.length;
+    const foodSt = gameState.food < 10 ? 'critical' : gameState.food < gameState.population ? 'low' : gameState.food > gameState.population * 3 ? 'healthy' : '';
+    const foodDisplay = `${Math.round(gameState.food)}`;
+    set('res-food',      `${foodDisplay} / ${getFoodCap()}`, foodSt);
+    const hapSt = gameState.happiness < 30 ? 'critical' : gameState.happiness < 60 ? 'low' : 'healthy';
+    set('res-happiness', `${Math.round(gameState.happiness)}%`, hapSt);
+    const happyIconEl = document.querySelector('.happy-icon');
+    if (happyIconEl) happyIconEl.textContent = gameState.happiness < 50 ? '☹' : '♥';
+    const woodEl  = document.getElementById('res-wood');
+    const stoneEl = document.getElementById('res-stone');
+    const ironEl  = document.getElementById('res-iron');
+    if (woodEl)  { woodEl.textContent  = Math.round(gameState.wood);  woodEl.className  = 'chip-value' + (gameState.wood  < 20 ? ' low' : ''); }
+    if (stoneEl) { stoneEl.textContent = Math.round(gameState.stone); stoneEl.className = 'chip-value' + (gameState.stone < 10 ? ' low' : ''); }
+    if (ironEl)  { ironEl.textContent  = Math.round(gameState.iron);  ironEl.className  = 'chip-value' + (gameState.iron  === 0 ? ' critical' : ''); }
+}
+
+// ===================== BUILD MENU (parchment) =====================
+const BUILD_ITEMS = [
+    { key: 'house',          name: 'House',          cat: 'civic',    yields: '+4 Housing',    assetKey: 'building_house' },
+    { key: 'farm',           name: 'Farm',           cat: 'civic',    yields: '+10 Food',       assetKey: 'building_farm' },
+    { key: 'granary',        name: 'Granary',        cat: 'civic',    yields: '+200 Food Cap',  assetKey: 'building_granary' },
+    { key: 'tavern',         name: 'Tavern',         cat: 'civic',    yields: '+Happiness',     assetKey: 'building_tavern' },
+    { key: 'road',           name: 'Road',           cat: 'civic',    yields: '2× Speed',       assetKey: 'tile_road' },
+    { key: 'academy',        name: 'Academy',        cat: 'civic',    yields: 'Research',       assetKey: 'building_academy' },
+    { key: 'monument',       name: 'Monument',       cat: 'civic',    yields: 'Win Game',       assetKey: 'building_monument' },
+    { key: 'clear',          name: 'Clear Tree',     cat: 'civic',    yields: '10G / tree',     assetKey: 'obstacle_tree' },
+    { key: 'clear_rubble',   name: 'Clear Rubble',   cat: 'civic',    yields: '15G / ruin',     assetKey: 'building_rubble' },
+    { key: 'lumberyard',     name: 'Lumber Yard',    cat: 'industry', yields: 'Wood / min',     assetKey: 'building_lumberyard' },
+    { key: 'quarry',         name: 'Quarry',         cat: 'industry', yields: 'Stone / min',    assetKey: 'building_quarry' },
+    { key: 'mine',           name: 'Mine',           cat: 'industry', yields: 'Iron / min',     assetKey: 'building_mine' },
+    { key: 'wall',           name: 'Wall',           cat: 'military', yields: '+2 Defense',     assetKey: 'building_wall' },
+    { key: 'gate',           name: 'Gate',           cat: 'military', yields: '+3 Defense',     assetKey: 'building_gate_open' },
+    { key: 'tower',          name: 'Tower',          cat: 'military', yields: '+10 Defense',    assetKey: 'building_tower' },
+    { key: 'barracks',       name: 'Barracks',       cat: 'military', yields: 'Train units',    assetKey: 'building_barracks' },
+    { key: 'archery_range',  name: 'Archery Range',  cat: 'military', yields: 'Train archers',  assetKey: 'building_archery_range' },
+    { key: 'ballista_tower', name: 'Ballista Twr',   cat: 'military', yields: '+15 Defense',    assetKey: 'building_ballistatower' },
+    { key: 'train_soldier',  name: 'Train Soldier',  cat: 'military', yields: '+5 DEF',         assetKey: 'citizen_soldier' },
+    { key: 'train_archer',   name: 'Train Archer',   cat: 'military', yields: 'Ranged unit',    assetKey: 'citizen_archer' },
+    { key: 'train_knight',   name: 'Train Knight',   cat: 'military', yields: 'Heavy unit',     assetKey: 'citizen_knight' },
+    { key: 'demolish',       name: 'Demolish',       cat: '_always',  yields: 'Refund 50%',     assetKey: null },
+];
+
+let _buildTab = 'all';
+
+function renderBuildMenu(tab) {
+    _buildTab = tab || _buildTab;
+    document.querySelectorAll('.build-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === _buildTab);
+    });
+    const itemsEl = document.getElementById('build-items');
+    if (!itemsEl) return;
+    const visible = BUILD_ITEMS.filter(item => {
+        if (_buildTab === 'all' || item.cat === '_always') return true;
+        return item.cat === _buildTab;
+    });
+    itemsEl.innerHTML = visible.map(item => {
+        const def = BUILDINGS[item.key];
+        const specialCosts = { clear: [10,0,0,0], clear_rubble: [15,0,0,0], road: [ROAD_COST,0,0,0], demolish: [0,0,0,0], train_soldier: [40,0,0,0], train_archer: [40,0,0,0], train_knight: [60,0,20,0] };
+        let cost, woodCost, ironCost, stoneCost;
+        if (def) {
+            cost = getScaledCost(item.key); woodCost = def.woodCost || 0; ironCost = def.ironCost || 0; stoneCost = def.stoneCost || 0;
+        } else {
+            [cost, woodCost, ironCost, stoneCost] = specialCosts[item.key] || [0,0,0,0];
+        }
+        const parts = [];
+        if (cost > 0)      parts.push(`<span class="build-cost-gold">◈ ${cost}</span>`);
+        if (woodCost > 0)  parts.push(`<span class="build-cost-wood">◆ ${woodCost}</span>`);
+        if (stoneCost > 0) parts.push(`<span class="build-cost-stone">⬟ ${stoneCost}</span>`);
+        if (ironCost > 0)  parts.push(`<span class="build-cost-iron">◇ ${ironCost}</span>`);
+        return `<div class="build-btn" data-tool="${item.key}">
+            <div class="build-sprite-frame"><canvas data-asset="${item.assetKey || ''}" width="28" height="28"></canvas></div>
+            <div class="build-item-text">
+                <div class="build-item-name">${item.name}</div>
+                <div class="build-item-costs">${parts.join('')}</div>
+            </div>
+            <div class="build-item-yield">${item.yields}</div>
+        </div>`;
+    }).join('');
+    itemsEl.querySelectorAll('canvas[data-asset]').forEach(cv => {
+        const key = cv.dataset.asset;
+        if (!key || !assets[key]) return;
+        const ctx2 = cv.getContext('2d');
+        ctx2.imageSmoothingEnabled = false;
+        ctx2.drawImage(assets[key], 0, 0, 28, 28);
+    });
+    updateBuildMenu();
+}
+
+export function updateCombatModeUI() {
+    const defendBtn = document.getElementById('btn-defend-mode');
+    const attackBtn = document.getElementById('btn-attack-mode');
+    if (!defendBtn || !attackBtn) return;
+    const mode = window._combatMode || 'defend';
+    defendBtn.classList.toggle('active', mode === 'defend');
+    attackBtn.classList.toggle('active', mode === 'attack');
+    defendBtn.setAttribute('aria-pressed', mode === 'defend' ? 'true' : 'false');
+    attackBtn.setAttribute('aria-pressed', mode === 'attack' ? 'true' : 'false');
+}
+
+export function _updateDayPhaseGlyph() {
+    const el = document.getElementById('day-phase-glyph');
+    if (!el) return;
+    const data = { dawn: { g: '🌅', c: '#f4a460' }, day: { g: '☀', c: '#ffd700' }, dusk: { g: '🌇', c: '#ff8c00' }, night: { g: '🌙', c: '#aaaaff' } };
+    const d = data[_dayPhase];
+    if (d) { el.textContent = d.g; el.style.color = d.c; }
+}
+
+export function updateDaySeason() {
+    const seasonGlyphs = { Spring: '✿', Summer: '☀', Autumn: '✦', Winter: '❄' };
+    const seasonColors = { Spring: '#4a6b2a', Summer: '#d4a838', Autumn: '#a8521c', Winter: '#7a9ab0' };
+    const s = gameState.season || 'Spring';
+    const dayEl   = document.getElementById('day-num');
+    const glyphEl = document.getElementById('season-glyph');
+    const nameEl  = document.getElementById('season-name');
+    if (dayEl)   dayEl.textContent = gameState.day || 1;
+    if (glyphEl) { glyphEl.textContent = seasonGlyphs[s] || '✿'; glyphEl.style.color = seasonColors[s] || '#4a6b2a'; }
+    if (nameEl)  nameEl.textContent = s;
+}
+
+function updateBuildMenu() {
+    document.querySelectorAll('#build-items .build-btn').forEach(btn => {
+        const tool = btn.dataset.tool;
+        btn.classList.toggle('active', tool === gameState.selectedTool);
+        if (tool === 'demolish') { btn.disabled = false; btn.classList.remove('disabled'); return; }
+        if (tool === 'clear')        { const c = gameState.gold < 10;  btn.disabled = c; btn.classList.toggle('disabled', c); return; }
+        if (tool === 'clear_rubble') { const c = gameState.gold < 15;  btn.disabled = c; btn.classList.toggle('disabled', c); return; }
+        if (tool === 'road')         { const c = gameState.gold < ROAD_COST; btn.disabled = c; btn.classList.toggle('disabled', c); return; }
+        if (tool === 'train_soldier') {
+            const c = !(gameState.gold >= 40 && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
+            btn.disabled = c; btn.classList.toggle('disabled', c); return;
+        }
+        if (tool === 'train_archer') {
+            const c = !(gameState.gold >= 40 && countBuildings('archery_range') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
+            btn.disabled = c; btn.classList.toggle('disabled', c); return;
+        }
+        if (tool === 'train_knight') {
+            const c = !(gameState.gold >= 60 && gameState.iron >= 20 && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
+            btn.disabled = c; btn.classList.toggle('disabled', c); return;
+        }
+        const def = BUILDINGS[tool];
+        if (!def) return;
+        const cost = getScaledCost(tool);
+        const woodCost = def.woodCost || 0;
+        const ironCost = def.ironCost || 0;
+        const stoneCost = def.stoneCost || 0;
+        const costsEl = btn.querySelector('.build-item-costs');
+        if (costsEl) {
+            const parts = [];
+            if (cost > 0)      parts.push(`<span class="build-cost-gold">◈ ${cost}</span>`);
+            if (woodCost > 0)  parts.push(`<span class="build-cost-wood">◆ ${woodCost}</span>`);
+            if (stoneCost > 0) parts.push(`<span class="build-cost-stone">⬟ ${stoneCost}</span>`);
+            if (ironCost > 0)  parts.push(`<span class="build-cost-iron">◇ ${ironCost}</span>`);
+            costsEl.innerHTML = parts.join('');
+        }
+        const canAfford = gameState.gold >= cost && gameState.wood >= woodCost && gameState.iron >= ironCost && gameState.stone >= stoneCost;
+        btn.disabled = !canAfford;
+        btn.classList.toggle('disabled', !canAfford);
+    });
+}
+
+export function refreshUI() {
+    gameState.defense = calcDefense();
+    updateResourceUI();
+    updateBuildMenu();
+}
+
+// Build item click (event delegation on container)
+document.getElementById('build-items').addEventListener('click', e => {
+    const btn = e.target.closest('.build-btn');
+    if (!btn || btn.disabled || btn.classList.contains('disabled')) return;
+    const tool = btn.dataset.tool;
+    if (tool === 'train_soldier') { trainSoldier(); return; }
+    if (tool === 'train_archer')  { trainArcher();  return; }
+    if (tool === 'train_knight')  { trainKnight();  return; }
+    gameState.selectedTool = gameState.selectedTool === tool ? null : tool;
+    updateBuildMenu();
+});
+
+// Build tab click
+document.getElementById('build-tabs').addEventListener('click', e => {
+    const tab = e.target.closest('.build-tab');
+    if (!tab) return;
+    renderBuildMenu(tab.dataset.tab);
+});
+
+
+// ===================== GRASS RENDERING =====================
+export function _buildGrassCache() {
+    const W = grid.width, H = grid.height, T = TILE_SIZE;
+    const oc = document.createElement('canvas');
+    oc.width = W * T;
+    oc.height = H * T;
+    const octx = oc.getContext('2d');
+    octx.imageSmoothingEnabled = false;
+    for (let ty = 0; ty < H; ty++) {
+        for (let tx = 0; tx < W; tx++) {
+            if (grid.tiles[ty][tx] !== 'tile_grass') continue;
+            const r = seededRand(tx * 1000 + ty);
+            octx.fillStyle = r() < 0.5 ? '#5e8a3e' : '#658f44';
+            octx.fillRect(tx * T, ty * T, T, T);
+            for (let i = 0; i < 4; i++) {
+                octx.fillStyle = i % 2 === 0 ? '#4a7a30' : '#3f6a28';
+                octx.fillRect(tx * T + Math.floor(r() * (T - 4)), ty * T + Math.floor(r() * (T - 4)), 4, 4);
+            }
+            for (let i = 0; i < 2; i++) {
+                octx.fillStyle = i % 2 === 0 ? '#7aa252' : '#88ad60';
+                octx.fillRect(tx * T + Math.floor(r() * (T - 4)), ty * T + Math.floor(r() * (T - 4)), 3, 3);
+            }
+        }
+    }
+    _grassCanvas = oc;
+}
+
+
+// ===================== RENDERING PIPELINE =====================
+export function renderWorldOverlay() {
+    if (!gameState.started) return;
+    const { x: camX, y: camY, zoom } = camera;
+    ctx.save();
+    ctx.setTransform(zoom, 0, 0, zoom, -camX * zoom, -camY * zoom);
+    ctx.imageSmoothingEnabled = false;
+
+    for (const p of projectiles) {
+        const t = p.timer / p.duration;
+        ctx.globalAlpha = Math.max(0, 1.0 - t);
+        ctx.strokeStyle = '#ffaa00';
+        ctx.lineWidth = 2 / zoom;
+        ctx.beginPath();
+        ctx.moveTo(p.fromX, p.fromY);
+        ctx.lineTo(p.toX, p.toY);
+        ctx.stroke();
+    }
+    ctx.globalAlpha = 1.0;
+
+    // Physics projectiles (arrows and bolts)
+    for (const p of activeProjectiles) {
+        const trailX = p.x - p.vx * 0.05;
+        const trailVy = p.vy - p.g * 0.05;
+        const trailY = p.y - trailVy * 0.05;
+        ctx.strokeStyle = p.type === 'bolt' ? '#cc8800' : '#ddaa55';
+        ctx.lineWidth = (p.type === 'bolt' ? 3 : 1.5) / zoom;
+        ctx.beginPath();
+        ctx.moveTo(trailX, trailY);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+    }
+
+    // Gate HP bars (when damaged)
+    for (const { tx, ty } of window.activeGates) {
+        const s = grid.structures[ty][tx];
+        const maxHp = getMaxHP('gate');
+        if (!s || (s.hp ?? maxHp) >= maxHp) continue;
+        const gx = tx * TILE_SIZE + TILE_SIZE / 2;
+        const gy = ty * TILE_SIZE;
+        const bw = TILE_SIZE - 4;
+        ctx.fillStyle = '#333333';
+        ctx.fillRect(gx - bw / 2, gy - 6, bw, 3);
+        ctx.fillStyle = '#ff6600';
+        ctx.fillRect(gx - bw / 2, gy - 6, bw * ((s.hp ?? maxHp) / maxHp), 3);
+    }
+
+    // Batch particles by type so shared canvas state (fillStyle / strokeStyle / lineWidth /
+    // font) is set once per group rather than re-set per particle. globalAlpha still varies
+    // per particle. Three linear passes over a small array — no allocation.
+    ctx.fillStyle = '#aaaaaa';
+    for (const p of particles) {
+        if (p.type !== 'puff') continue;
+        ctx.globalAlpha = p.alpha;
+        const radius = 4 + (p.timer / p.duration) * 6;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.strokeStyle = '#ff2222';
+    ctx.lineWidth = 3 / zoom;
+    for (const p of particles) {
+        if (p.type !== 'slash') continue;
+        ctx.globalAlpha = p.alpha;
+        ctx.beginPath();
+        ctx.moveTo(p.x - 10, p.y - 10);
+        ctx.lineTo(p.x + 10, p.y + 10);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(p.x + 10, p.y - 10);
+        ctx.lineTo(p.x - 10, p.y + 10);
+        ctx.stroke();
+    }
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    for (const p of particles) {
+        if (p.type !== 'floating_text') continue;
+        ctx.globalAlpha = p.alpha;
+        ctx.fillStyle = p.color || '#ff2222';
+        const curY = p.y - (p.timer / p.duration) * 20;
+        ctx.fillText(p.text, p.x, curY);
+    }
+    ctx.globalAlpha = 1.0;
+
+    const soldierAsset = assets['citizen_soldier'];
+    for (const sol of soldiers) {
+        if (soldierAsset) {
+            ctx.drawImage(soldierAsset, sol.x - 8, sol.y - 8, 16, 16);
+        } else {
+            ctx.fillStyle = '#1a3a6a';
+            ctx.beginPath(); ctx.arc(sol.x, sol.y, 6, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = '#ffdd57'; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(sol.x, sol.y, 6, 0, Math.PI * 2); ctx.stroke();
+        }
+        if (sol.hp < 100) {
+            const bw = 16;
+            ctx.fillStyle = '#333333';
+            ctx.fillRect(sol.x - bw / 2, sol.y - 12, bw, 2);
+            ctx.fillStyle = '#4488ff';
+            ctx.fillRect(sol.x - bw / 2, sol.y - 12, bw * (sol.hp / 100), 2);
+        }
+    }
+
+    const archerAsset = assets['citizen_archer'];
+    for (const a of archers) {
+        if (archerAsset) {
+            ctx.drawImage(archerAsset, a.x - 8, a.y - 8, 16, 16);
+        } else {
+            ctx.fillStyle = '#00ccaa';
+            ctx.beginPath(); ctx.arc(a.x, a.y, 5, 0, Math.PI * 2); ctx.fill();
+        }
+        if (a.hp < a.maxHp) {
+            const bw = 14;
+            ctx.fillStyle = '#333333';
+            ctx.fillRect(a.x - bw / 2, a.y - 12, bw, 2);
+            ctx.fillStyle = '#00ccaa';
+            ctx.fillRect(a.x - bw / 2, a.y - 12, bw * (a.hp / a.maxHp), 2);
+        }
+    }
+
+    const knightAsset = assets['citizen_knight'];
+    for (const k of knights) {
+        if (knightAsset) {
+            ctx.drawImage(knightAsset, k.x - 8, k.y - 8, 16, 16);
+        } else {
+            ctx.fillStyle = '#cc8800';
+            ctx.beginPath(); ctx.arc(k.x, k.y, 6, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = '#ffaa33'; ctx.lineWidth = 1.5 / zoom;
+            ctx.beginPath(); ctx.arc(k.x, k.y, 6, 0, Math.PI * 2); ctx.stroke();
+        }
+        if (k.hp < k.maxHp) {
+            const bw = 16;
+            ctx.fillStyle = '#333333';
+            ctx.fillRect(k.x - bw / 2, k.y - 12, bw, 2);
+            ctx.fillStyle = '#cc8800';
+            ctx.fillRect(k.x - bw / 2, k.y - 12, bw * (k.hp / k.maxHp), 2);
+        }
+    }
+
+    // Fire overlay
+    if (incidentManager?.active?.type === 'fire') {
+        const fireAsset = assets['effect_fire'];
+        const flicker = 0.75 + Math.sin(Date.now() / 100) * 0.25;
+        for (const fire of incidentManager.active.fires) {
+            const fx = fire.tx * TILE_SIZE, fy = fire.ty * TILE_SIZE;
+            ctx.globalAlpha = flicker;
+            if (fireAsset) {
+                ctx.drawImage(fireAsset, fx, fy, TILE_SIZE, TILE_SIZE);
+            } else {
+                const r = Math.floor(200 + Math.random() * 55), g2 = Math.floor(50 + Math.random() * 80);
+                ctx.fillStyle = `rgba(${r},${g2},0,0.85)`;
+                ctx.fillRect(fx + 2, fy + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+                ctx.fillStyle = `rgba(255,${Math.floor(150 + Math.random() * 100)},0,0.5)`;
+                ctx.fillRect(fx + 5, fy + 5, TILE_SIZE - 10, TILE_SIZE - 10);
+            }
+        }
+        ctx.globalAlpha = 1.0;
+    }
+
+    // Drought overlay on farms using activeFarms
+    if (droughtActive) {
+        const droughtAsset = assets['effect_drought'];
+        for (const farm of window.activeFarms) {
+            const { tx, ty } = farm;
+            const s = grid.structures[ty]?.[tx];
+            if (!s || s.def.key !== 'farm') continue;
+            ctx.globalAlpha = 0.65;
+            if (droughtAsset) {
+                ctx.drawImage(droughtAsset, tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            } else {
+                ctx.fillStyle = '#7a5220';
+                ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            }
+        }
+        ctx.globalAlpha = 1.0;
+    }
+
+    // Merchant NPC
+    if (merchantNPC && merchantNPC.state !== 'done') {
+        const merchantAsset = assets['npc_merchant'];
+        if (merchantAsset) {
+            ctx.drawImage(merchantAsset, merchantNPC.x - 8, merchantNPC.y - 8, 16, 16);
+        } else {
+            ctx.fillStyle = '#cc8844';
+            ctx.fillRect(merchantNPC.x - 8, merchantNPC.y - 8, 16, 16);
+            ctx.strokeStyle = '#eecc77'; ctx.lineWidth = 1 / camera.zoom;
+            ctx.strokeRect(merchantNPC.x - 8, merchantNPC.y - 8, 16, 16);
+        }
+    }
+
+    for (const r of raiders) {
+        const raiderAsset = r.type === 'torch' ? assets['enemy_torch_raider']
+                          : r.type === 'siege' ? assets['enemy_siege_raider']
+                          : assets['enemy_raider'];
+        ctx.save();
+        ctx.globalAlpha = r._alpha;
+        ctx.translate(r.x, r.y);
+        if (r._rotation) ctx.rotate(r._rotation);
+        if (r._attacking) {
+            const pulse = 0.45 + 0.55 * Math.abs(Math.sin(Date.now() / 120));
+            ctx.strokeStyle = `rgba(255, 80, 0, ${pulse})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, 11, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        if (raiderAsset) {
+            ctx.drawImage(raiderAsset, -8, -8, 16, 16);
+        } else {
+            ctx.fillStyle = '#ff0000';
+            ctx.beginPath();
+            ctx.arc(0, 0, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+        ctx.restore();
+        const _rMaxHp = r.type === 'siege' ? 150 : 100;
+        if (r.state === 'walking' && r.hp < _rMaxHp) {
+            const bw = 16;
+            ctx.fillStyle = '#333333';
+            ctx.fillRect(r.x - bw / 2, r.y - 12, bw, 2);
+            ctx.fillStyle = '#ff4444';
+            ctx.fillRect(r.x - bw / 2, r.y - 12, bw * (r.hp / _rMaxHp), 2);
+        }
+    }
+
+    ctx.restore();
+}
+
+function render() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const hoverTile = grid.screenToGrid(mouseScreenX, mouseScreenY);
+    const savedCamX = camera.x, savedCamY = camera.y;
+    camera.x += _shakeX; camera.y += _shakeY;
+    grid.render(ctx, assets, { hoverTile, selectedTool: gameState.selectedTool, buildings: ALL_DEFS, citizens });
+    renderWorldOverlay();
+    camera.x = savedCamX; camera.y = savedCamY;
+
+    // Torch glow — additive radial gradients on towers and gates during dusk/night
+    if ((_dayPhase === 'night' || _dayPhase === 'dusk') && (_overlayAlpha > 0.01)) {
+        const _glowScale = _dayPhase === 'dusk' ? 0.5 : 1.0;
+        const { zoom } = camera;
+        const camX = savedCamX, camY = savedCamY;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalCompositeOperation = 'lighter';
+        for (const list of [window.activeTowers, window.activeGates]) {
+            for (const { tx, ty } of list) {
+                const sx = (tx * TILE_SIZE + TILE_SIZE / 2) * zoom - camX * zoom;
+                const sy = (ty * TILE_SIZE + TILE_SIZE / 2) * zoom - camY * zoom;
+                const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, 48);
+                grad.addColorStop(0, `rgba(255,180,60,${0.35 * _glowScale})`);
+                grad.addColorStop(1, 'rgba(255,100,0,0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(sx - 48, sy - 48, 96, 96);
+            }
+        }
+        ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // Darkness overlay — screen-space tinted fillRect, alpha lerped in update()
+    if (_overlayAlpha > 0.001) {
+        const _phaseColor = { dawn: '0,0,40', day: null, dusk: '255,100,0', night: '0,0,20' }[_dayPhase];
+        if (_phaseColor) {
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.fillStyle = `rgba(${_phaseColor},${_overlayAlpha})`;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+    }
+
+    // Snow overlay — screen-space, always updated but only drawn in Winter
+    if (_snowParticles.length > 0) {
+        const _drawSnow = SEASON_MODIFIERS[SEASONS.indexOf(gameState.season)].snowOverlay;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        for (let i = 0; i < _snowParticles.length; i++) {
+            const p = _snowParticles[i];
+            if (_drawSnow) {
+                ctx.globalAlpha = p.opacity;
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            p.y += p.speed;
+            p.x += p.drift;
+            if (p.y > canvas.height) {
+                p.y = -4;
+                p.x = Math.random() * canvas.width;
+            }
+        }
+        ctx.globalAlpha = 1.0;
+    }
+}
+
+
+// Bind to window for global compatibility
+
+// ===================== MISSED CALCULATIONS & UI HELPERS =====================
+export function _buildStaticCache() {
+    const grid = window.grid;
+    const assets = window.assets;
+    if (!grid || !assets) return;
+    const W = grid.width, H = grid.height, T = TILE_SIZE;
+    const oc = document.createElement('canvas');
+    oc.width = W * T;
+    oc.height = H * T;
+    const octx = oc.getContext('2d');
+    octx.imageSmoothingEnabled = false;
+
+    // Draw grass background from _grassCanvas
+    if (_grassCanvas) {
+        octx.drawImage(_grassCanvas, 0, 0);
+    } else {
+        _buildGrassCache();
+        if (_grassCanvas) octx.drawImage(_grassCanvas, 0, 0);
+    }
+
+    // Draw non-grass tiles (roads, dirt)
+    for (let ty = 0; ty < H; ty++) {
+        for (let tx = 0; tx < W; tx++) {
+            const tile = grid.tiles[ty][tx];
+            if (tile !== 'tile_grass') {
+                const asset = assets[tile];
+                if (asset) octx.drawImage(asset, tx * T, ty * T, T, T);
+            }
+        }
+    }
+
+    // Draw static structures
+    for (let ty = 0; ty < H; ty++) {
+        for (let tx = 0; tx < W; tx++) {
+            const s = grid.structures[ty][tx];
+            if (!s || s.isChild) continue;
+            const key = s.def.key;
+            // monument, academy, tower, ballista_tower, gate are dynamic
+            if (key === 'monument' || key === 'academy' || key === 'tower' || key === 'ballista_tower' || key === 'gate') continue;
+            // Draw complete structures
+            if ((s.progress ?? 1.0) >= 1.0) {
+                const assetKey = s.def.assetKey;
+                const asset = assets[assetKey];
+                const w = s.def.width || 1;
+                const h = s.def.height || 1;
+                if (asset) {
+                    octx.drawImage(asset, tx * T, ty * T, w * T, h * T);
+                } else {
+                    octx.fillStyle = s.def.color;
+                    octx.fillRect(tx * T, ty * T, w * T, h * T);
+                }
+            }
+        }
+    }
+    _staticCanvas = oc;
+}
+
+export function rebuildStructureLists() {
+    const activeTowers = [];
+    const activeBallistaTowers = [];
+    const activeGates = [];
+    const activeFarms = [];
+    const activeMonuments = [];
+    const activeWalls = [];
+    const activePillageable = [];
+    const activeHouses = [];
+    const activeGranaries = [];
+    const activeTaverns = [];
+    const buildingCounts = {};
+    const jobfulStructures = [];
+    const underConstruction = [];
+    for (let ty = 0; ty < grid.height; ty++) {
+        for (let tx = 0; tx < grid.width; tx++) {
+            const s = grid.structures[ty][tx];
+            if (!s || s.isChild) continue;
+            const key = s.def.key;
+            if ((key === 'lumberyard' || key === 'quarry' || key === 'mine') && (s.progress ?? 1.0) < 1.0) {
+                s.progress = 1.0;
+            }
+            buildingCounts[key] = (buildingCounts[key] || 0) + 1;
+            if (key === 'tower')          activeTowers.push({ tx, ty });
+            if (key === 'ballista_tower') {
+                const bRange  = gameState.upgrades?.ballistic_engineering ? 19 : 16;
+                const bDamage = gameState.upgrades?.ballistic_engineering ? 90 : 75;
+                activeBallistaTowers.push({ tx, ty, range: bRange, damage: bDamage });
+            }
+            if (key === 'gate')           activeGates.push({ tx, ty });
+            if (key === 'farm')           activeFarms.push({ tx, ty });
+            if (key === 'monument')       activeMonuments.push({ tx, ty });
+            if (key === 'wall')           activeWalls.push({ tx, ty });
+            if (key === 'house')          activeHouses.push({ tx, ty });
+            if (key === 'granary')        activeGranaries.push({ tx, ty });
+            if (key === 'tavern')         activeTaverns.push({ tx, ty });
+            if (_PILLAGEABLE.has(key))    activePillageable.push({ tx, ty });
+            if (s.def.maxWorkers)         jobfulStructures.push({ tx, ty, def: s.def });
+            if ((s.progress ?? 1.0) < 1.0) underConstruction.push({ tx, ty });
+        }
+    }
+    window.setBuildingLists({
+        activeTowers, activeBallistaTowers, activeGates, activeFarms, activeMonuments,
+        activeWalls, activePillageable, activeHouses, activeGranaries, activeTaverns,
+        buildingCounts, jobfulStructures, underConstruction
+    });
+    _buildStaticCache();
+}
+export function showExpansionBanner() {
+    const banner = document.getElementById('expansion-banner');
+    if (!banner) return;
+    if (expansionBannerTimer) clearTimeout(expansionBannerTimer);
+    
+    banner.style.display = 'block';
+    banner.offsetHeight; // force reflow
+    banner.classList.add('active');
+    
+    expansionBannerTimer = setTimeout(() => {
+        banner.classList.remove('active');
+        setTimeout(() => {
+            if (!banner.classList.contains('active')) {
+                banner.style.display = 'none';
+            }
+        }, 500);
+    }, 1500);
+}
+
+export function getAdjacencyBonus(tx, ty, buildingType) {
+    const dirs = [{dx:0,dy:-1},{dx:0,dy:1},{dx:-1,dy:0},{dx:1,dy:0}];
+    let count = 0;
+    for (const {dx, dy} of dirs) {
+        const nx = tx + dx, ny = ty + dy;
+        if (!grid.inBounds(nx, ny)) continue;
+        const s = grid.structures[ny][nx];
+        if (!s) continue;
+        const k = s.def.key;
+        if (buildingType === 'farm'       && k === 'farm')                              count++;
+        if (buildingType === 'lumberyard' && k === 'obstacle_tree')                     count++;
+        if (buildingType === 'quarry'     && k === 'stone_deposit')                       count++;
+        if (buildingType === 'mine'       && k === 'iron_vein')                           count++;
+        if (buildingType === 'tavern'     && k === 'house')                             count++;
+    }
+    switch (buildingType) {
+        case 'farm':      return count * 0.5;
+        case 'lumberyard': return count * 1.0;
+        case 'quarry':    return count * 1.0;
+        case 'mine':      return count * 1.0;
+        case 'tavern':    return count * 3;
+        default:          return 0;
+    }
+}
+
+export function getFoodCap() {
+    let cap = FOOD_CAP_BASE;
+    for (const g of window.activeGranaries) {
+        const key = `${g.tx},${g.ty}`;
+        cap += _tier2Upgrades[key] ? 350 : FOOD_CAP_PER_GRANARY;
+    }
+    return cap;
+}
+export function countBuildings(key) {
+    // Reads the tally maintained by rebuildStructureLists — no grid scan.
+    return window.buildingCounts[key] || 0;
+}
+
+function getScaledCost(key) {
+    const def = BUILDINGS[key];
+    if (!def) return Infinity;
+    let cost = def.cost;
+    if (key === 'house') cost += (gameState.housesBuilt || 0) * 5;
+    else if (key === 'farm') cost += (gameState.farmsBuilt || 0) * 5;
+    return cost;
+}
+
+function calcDefense() {
+    // Derived from the maintained active-structure lists — no grid scan.
+    return window.activeWalls.length * 2 + window.activeTowers.length * 10 + window.activeGates.length * 3
+         + window.activeBallistaTowers.length * 15
+         + soldiers.length * 5 + archers.length * 8 + knights.length * 10;
+}
+
+function calcHappiness() {
+    _happinessFactors = [];
+    if (gameState.population === 0) return 100;
+    let score = 45;
+    const pop = gameState.population;
+    const food = gameState.food;
+
+    // Food factor (mutually exclusive tiers)
+    if (food === 0) {
+        score -= 25; _happinessFactors.push({ label: 'No Food', signs: '---', polarity: 'neg' });
+    } else if (food < pop * 0.5) {
+        score -= 15; _happinessFactors.push({ label: 'Food Scarce', signs: '--', polarity: 'neg' });
+    } else if (food < pop) {
+        score -= 5;  _happinessFactors.push({ label: 'Food Low', signs: '-', polarity: 'neg' });
+    } else if (food < pop * 2) {
+        score += 15; _happinessFactors.push({ label: 'Food Adequate', signs: '++', polarity: 'pos' });
+    } else {
+        score += 25; _happinessFactors.push({ label: 'Food Surplus', signs: '+++', polarity: 'pos' });
+    }
+
+    // Tavern factor (capped at +20)
+    const tavernCount = window.activeTaverns.length;
+    if (tavernCount >= 2) {
+        score += 20; _happinessFactors.push({ label: 'Taverns (2+)', signs: '+++', polarity: 'pos' });
+    } else if (tavernCount === 1) {
+        score += 10; _happinessFactors.push({ label: 'Tavern', signs: '++', polarity: 'pos' });
+    }
+
+    // Tavern adjacency bonus
+    let tavernAdjBonus = 0;
+    for (const t of window.activeTaverns) tavernAdjBonus += getAdjacencyBonus(t.tx, t.ty, 'tavern');
+    if (tavernAdjBonus > 0) {
+        score += tavernAdjBonus;
+        const adjSigns = tavernAdjBonus >= 12 ? '+++' : tavernAdjBonus >= 6 ? '++' : '+';
+        _happinessFactors.push({ label: `Tavern Adj +${tavernAdjBonus}`, signs: adjSigns, polarity: 'pos' });
+    }
+
+    // Winter penalty
+    if (gameState.season === 'Winter') {
+        score -= 5; _happinessFactors.push({ label: 'Winter', signs: '-', polarity: 'neg' });
+    }
+
+    // Drought penalty
+    if (droughtActive) {
+        score -= 8; _happinessFactors.push({ label: 'Drought', signs: '-', polarity: 'neg' });
+    }
+
+    // Grief penalty
+    if (_griefPenalty > 0) {
+        score -= _griefPenalty;
+        const griefSigns = _griefPenalty > 10 ? '---' : _griefPenalty > 5 ? '--' : '-';
+        _happinessFactors.push({ label: 'Grief', signs: griefSigns, polarity: 'neg' });
+    }
+
+    // Fire penalty (count active fires from incidentManager)
+    const fireCount = (incidentManager?.active?.type === 'fire') ? (incidentManager.active.fires?.length ?? 0) : 0;
+    if (fireCount > 0) {
+        const fireDmg = Math.min(18, fireCount * 6);
+        score -= fireDmg;
+        const fireSigns = fireCount >= 3 ? '---' : fireCount === 2 ? '--' : '-';
+        _happinessFactors.push({ label: 'Fire', signs: fireSigns, polarity: 'neg' });
+    }
+
+    // Overcrowding penalty
+    if (pop > gameState.housing) {
+        const excess = pop - gameState.housing;
+        score -= Math.min(20, excess * 4);
+        const crowdSigns = excess >= 5 ? '---' : excess >= 3 ? '--' : '-';
+        _happinessFactors.push({ label: 'Overcrowded', signs: crowdSigns, polarity: 'neg' });
+    }
+
+    // Garrison pressure penalty
+    if ((soldiers.length + archers.length + knights.length) > pop * 0.5) {
+        score -= 12; _happinessFactors.push({ label: 'Garrison Heavy', signs: '--', polarity: 'neg' });
+    }
+
+    return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function getSpawnInterval() {
+    if (gameState.happiness >= 75) return 3.0;
+    if (gameState.happiness >= 40) return 5.0;
+    return Infinity;
+}
+
+function formatTime(s) {
+    s = Math.max(0, s);
+    return `${Math.floor(s / 60).toString().padStart(2,'0')}:${Math.floor(s % 60).toString().padStart(2,'0')}`;
+}
+
+Object.assign(window, {
+
+    rebuildStructureLists, showExpansionBanner, getAdjacencyBonus, getFoodCap,
+    countBuildings, getScaledCost, calcDefense, calcHappiness, getSpawnInterval, formatTime,
+    _buildStaticCache, _staticCanvas,
+
+    GameGrid, openResearchModal, closeResearchModal, showDiplomacyModal, chooseDiplomacyOption,
+    closeBuildingPanel, openBuildingPanel, updateResearchModalUI, startResearch, updateResearch,
+    applyUpgradeEffects, getHighScores, saveHighScores, isHighScore, addHighScoreEntry,
+    updateLeaderboardDisplays, calculateCurrentScore, triggerVictory, triggerDefeat,
+    updateRaidHUD, showModal, updateTimePauseUI, updateResourceUI, renderBuildMenu,
+    updateCombatModeUI, _updateDayPhaseGlyph, updateDaySeason, updateBuildMenu, refreshUI,
+    _buildGrassCache, renderWorldOverlay, render
+});
+
+
+// ===================== ASSET LOADER =====================
+export class AssetLoader {
+    constructor() { this.assets = {}; }
+
+    _createFallbackCanvas(color, w = 16, h = 16) {
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const cx = c.getContext('2d');
+        cx.fillStyle = color;
+        cx.fillRect(0, 0, w, h);
+        return c;
+    }
+
+    _createRoadFallback() {
+        const c = document.createElement('canvas');
+        c.width = 16; c.height = 16;
+        const cx = c.getContext('2d');
+        cx.fillStyle = '#888888';
+        cx.fillRect(0, 0, 16, 16);
+        cx.strokeStyle = '#666666';
+        cx.lineWidth = 1;
+        cx.strokeRect(1, 1, 6, 6);
+        cx.strokeRect(9, 1, 6, 6);
+        cx.strokeRect(1, 9, 6, 6);
+        cx.strokeRect(9, 9, 6, 6);
+        return c;
+    }
+
+    _createTreeFallback() {
+        const c = document.createElement('canvas');
+        c.width = 16; c.height = 16;
+        const cx = c.getContext('2d');
+        cx.fillStyle = '#2d5a1b';
+        cx.beginPath();
+        cx.moveTo(8, 1); cx.lineTo(15, 12); cx.lineTo(1, 12);
+        cx.closePath();
+        cx.fill();
+        cx.fillStyle = '#6b3d2c';
+        cx.fillRect(6, 12, 4, 4);
+        return c;
+    }
+
+    _createCircleFallback(color, size = 16, radius = 4) {
+        const c = document.createElement('canvas');
+        c.width = size; c.height = size;
+        const cx = c.getContext('2d');
+        cx.fillStyle = color;
+        cx.beginPath();
+        cx.arc(size / 2, size / 2, radius, 0, Math.PI * 2);
+        cx.fill();
+        return c;
+    }
+
+    // BFS flood-fill: strip edge-connected background pixels to transparency
+    _stripBg(img) {
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        if (!w || !h) return img;
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const cx = c.getContext('2d', { willReadFrequently: true });
+        cx.drawImage(img, 0, 0);
+        const d = cx.getImageData(0, 0, w, h);
+        const px = d.data;
+        const bgR = px[0], bgG = px[1], bgB = px[2];
+        const tol = 40;
+        const near = i => {
+            const dr = px[i]-bgR, dg = px[i+1]-bgG, db = px[i+2]-bgB;
+            return dr*dr + dg*dg + db*db < tol*tol;
+        };
+        const vis = new Uint8Array(w * h);
+        const q = [];
+        const seed = (x, y) => {
+            const idx = y * w + x;
+            if (!vis[idx] && near(idx * 4)) { vis[idx] = 1; q.push(idx); }
+        };
+        for (let x = 0; x < w; x++) { seed(x, 0); seed(x, h - 1); }
+        for (let y = 1; y < h - 1; y++) { seed(0, y); seed(w - 1, y); }
+        while (q.length) {
+            const idx = q.pop();
+            px[idx * 4 + 3] = 0;
+            const x = idx % w, y = (idx / w) | 0;
+            if (x > 0   && !vis[idx-1] && near((idx-1)*4)) { vis[idx-1] = 1; q.push(idx-1); }
+            if (x < w-1 && !vis[idx+1] && near((idx+1)*4)) { vis[idx+1] = 1; q.push(idx+1); }
+            if (y > 0   && !vis[idx-w] && near((idx-w)*4)) { vis[idx-w] = 1; q.push(idx-w); }
+            if (y < h-1 && !vis[idx+w] && near((idx+w)*4)) { vis[idx+w] = 1; q.push(idx+w); }
+        }
+        cx.putImageData(d, 0, 0);
+        return c;
+    }
+
+    async _loadStripped(name, src) {
+        return new Promise(resolve => {
+            const img = new Image();
+            img.onload = () => { this.assets[name] = this._stripBg(img); resolve(true); };
+            img.onerror = () => { console.warn(`Asset "${src}" not found, using fallback.`); resolve(false); };
+            img.src = src;
+        });
+    }
+
+    async _loadImage(name, src) {
+        return new Promise(resolve => {
+            const img = new Image();
+            img.onload = () => { this.assets[name] = img; resolve(true); };
+            img.onerror = () => { console.warn(`Asset "${src}" not found, using fallback.`); resolve(false); };
+            img.src = src;
+        });
+    }
+
+    async loadAll() {
+        if (!await this._loadImage('tile_grass', 'assets/sprites/tile_grass.png'))
+            this.assets['tile_grass'] = this._createFallbackCanvas('#4a8c3f');
+        if (!await this._loadImage('tile_dirt', 'assets/sprites/tile_dirt.png'))
+            this.assets['tile_dirt'] = this._createFallbackCanvas('#8B6532');
+        if (!await this._loadImage('building_house', 'assets/sprites/building_house.png'))
+            this.assets['building_house'] = this._createFallbackCanvas('#d9534f', 16, 16);
+        if (!await this._loadImage('building_tower', 'assets/sprites/building_tower.png'))
+            this.assets['building_tower'] = this._createFallbackCanvas('#0275d8', 16, 32);
+        if (!await this._loadImage('building_wall', 'assets/sprites/building_wall.png'))
+            this.assets['building_wall'] = this._createFallbackCanvas('#777777', 16, 16);
+        if (!await this._loadImage('building_farm', 'assets/sprites/building_farm.png'))
+            this.assets['building_farm'] = this._createFallbackCanvas('#f0ad4e', 16, 16);
+        if (!await this._loadImage('building_granary', 'assets/sprites/building_granary.png'))
+            this.assets['building_granary'] = this._createFallbackCanvas('#8B6914', 16, 16);
+        if (!await this._loadImage('building_tavern', 'assets/sprites/building_tavern.png'))
+            this.assets['building_tavern'] = this._createFallbackCanvas('#b8860b', 16, 16);
+        if (!await this._loadImage('citizen_sprite', 'assets/sprites/citizen_sprite.png'))
+            this.assets['citizen_sprite'] = this._createCircleFallback('#ffdd57', 16, 4);
+        if (!await this._loadImage('obstacle_tree', 'assets/sprites/obstacle_tree.png'))
+            this.assets['obstacle_tree'] = this._createTreeFallback();
+        if (!await this._loadImage('tile_road', 'assets/sprites/tile_road.png'))
+            this.assets['tile_road'] = this._createRoadFallback();
+        if (!await this._loadStripped('building_barracks', 'assets/sprites/building_barracks.png'))
+            this.assets['building_barracks'] = this._createFallbackCanvas('#6d4c41', 16, 16);
+        if (!await this._loadImage('citizen_soldier', 'assets/sprites/citizen_soldier.png')) {
+            const c = document.createElement('canvas');
+            c.width = 16; c.height = 16;
+            const cx = c.getContext('2d');
+            cx.fillStyle = '#1a3a6a';
+            cx.beginPath(); cx.arc(8, 8, 6, 0, Math.PI * 2); cx.fill();
+            cx.strokeStyle = '#ffdd57'; cx.lineWidth = 1.5;
+            cx.beginPath(); cx.arc(8, 8, 6, 0, Math.PI * 2); cx.stroke();
+            this.assets['citizen_soldier'] = c;
+        }
+        if (!await this._loadImage('building_rubble', 'assets/sprites/building_rubble.png')) {
+            const c = document.createElement('canvas');
+            c.width = 16; c.height = 16;
+            const cx = c.getContext('2d');
+            cx.fillStyle = '#444444';
+            cx.fillRect(1, 8, 6, 5);
+            cx.fillRect(9, 9, 5, 4);
+            cx.fillRect(4, 5, 7, 4);
+            cx.fillStyle = '#666666';
+            cx.fillRect(2, 9, 3, 3);
+            cx.fillRect(10, 10, 3, 2);
+            this.assets['building_rubble'] = c;
+        }
+        if (!await this._loadImage('enemy_raider', 'assets/sprites/enemy_raider.png')) {
+            const c = document.createElement('canvas');
+            c.width = 16; c.height = 16;
+            const cx = c.getContext('2d');
+            cx.fillStyle = '#ff0000';
+            cx.beginPath();
+            cx.arc(8, 8, 5, 0, Math.PI * 2);
+            cx.fill();
+            cx.strokeStyle = '#000000';
+            cx.lineWidth = 1;
+            cx.stroke();
+            this.assets['enemy_raider'] = c;
+        }
+        if (!await this._loadImage('enemy_torch_raider', 'assets/sprites/enemy_torch_raider.png')) {
+            const c = document.createElement('canvas'); c.width = 16; c.height = 16;
+            const cx = c.getContext('2d');
+            cx.fillStyle = '#5a1a00';
+            cx.beginPath(); cx.arc(8, 8, 5, 0, Math.PI * 2); cx.fill();
+            cx.strokeStyle = '#221100'; cx.lineWidth = 1; cx.stroke();
+            cx.fillStyle = '#ff6600'; cx.fillRect(11, 3, 3, 5);
+            cx.fillStyle = '#ffcc00'; cx.fillRect(12, 2, 2, 3);
+            this.assets['enemy_torch_raider'] = c;
+        }
+        if (!await this._loadImage('enemy_siege_raider', 'assets/sprites/enemy_siege_raider.png')) {
+            const c = document.createElement('canvas'); c.width = 16; c.height = 16;
+            const cx = c.getContext('2d');
+            cx.fillStyle = '#444444';
+            cx.fillRect(3, 4, 10, 10);
+            cx.fillStyle = '#666666';
+            cx.fillRect(2, 4, 3, 5); cx.fillRect(11, 4, 3, 5);
+            cx.fillStyle = '#888888';
+            cx.fillRect(4, 11, 8, 3);
+            this.assets['enemy_siege_raider'] = c;
+        }
+        if (!await this._loadImage('building_lumberyard', 'assets/sprites/building_lumberyard.png'))
+            this.assets['building_lumberyard'] = this._createFallbackCanvas('#8B6914', 16, 16);
+        if (!await this._loadImage('building_quarry', 'assets/sprites/building_quarry.png'))
+            this.assets['building_quarry'] = this._createFallbackCanvas('#7a6a5a', 16, 16);
+        if (!await this._loadImage('building_mine', 'assets/sprites/building_mine.png'))
+            this.assets['building_mine'] = this._createFallbackCanvas('#4a4a4a', 16, 16);
+        if (!await this._loadImage('building_warehouse', 'assets/sprites/building_warehouse.png'))
+            this.assets['building_warehouse'] = this._createFallbackCanvas('#8B7355', 16, 16);
+        if (!await this._loadImage('obstacle_stone', 'assets/sprites/obstacle_stone.png'))
+            this.assets['obstacle_stone'] = this._createFallbackCanvas('#6e7275', 16, 16);
+        if (!await this._loadImage('obstacle_iron', 'assets/sprites/obstacle_iron.png'))
+            this.assets['obstacle_iron'] = this._createFallbackCanvas('#b2b9c0', 16, 16);
+        if (!await this._loadImage('building_gate_open', 'assets/sprites/building_gate_open.png'))
+            this.assets['building_gate_open'] = this._createFallbackCanvas('#8B7355', 16, 16);
+        if (!await this._loadImage('building_gate_closed', 'assets/sprites/building_gate_closed.png'))
+            this.assets['building_gate_closed'] = this._createFallbackCanvas('#5a4828', 16, 16);
+        if (!await this._loadImage('building_archery_range', 'assets/sprites/building_archery_range.png'))
+            this.assets['building_archery_range'] = this._createFallbackCanvas('#4a6a3a', 16, 16);
+        if (!await this._loadImage('building_ballistatower', 'assets/sprites/building_ballistatower.png'))
+            this.assets['building_ballistatower'] = this._createFallbackCanvas('#4a3a2a', 16, 32);
+        if (!await this._loadImage('citizen_archer', 'assets/sprites/citizen_archer.png'))
+            this.assets['citizen_archer'] = this._createCircleFallback('#00ccaa', 16, 5);
+        if (!await this._loadImage('citizen_knight', 'assets/sprites/citizen_knight.png'))
+            this.assets['citizen_knight'] = this._createCircleFallback('#cc8800', 16, 6);
+        if (!await this._loadImage('building_academy', 'assets/sprites/building_academy.png'))
+            this.assets['building_academy'] = this._createFallbackCanvas('#9c27b0', 16, 16);
+        if (!await this._loadImage('building_monument', 'assets/sprites/building_monument.png'))
+            this.assets['building_monument'] = this._createFallbackCanvas('#00bcd4', 32, 32);
+        if (!await this._loadImage('effect_fire', 'assets/sprites/effect_fire.png')) {
+            const c = document.createElement('canvas'); c.width = 16; c.height = 16;
+            const cx = c.getContext('2d');
+            cx.fillStyle = '#ff6600'; cx.fillRect(2, 4, 12, 10);
+            cx.fillStyle = '#ffaa00'; cx.fillRect(4, 6, 8, 8);
+            cx.fillStyle = '#ffff44'; cx.fillRect(6, 9, 4, 5);
+            this.assets['effect_fire'] = c;
+        }
+        if (!await this._loadImage('effect_drought', 'assets/sprites/effect_drought.png')) {
+            const c = document.createElement('canvas'); c.width = 16; c.height = 16;
+            const cx = c.getContext('2d');
+            cx.fillStyle = '#8B5a1a'; cx.fillRect(0, 0, 16, 16);
+            cx.strokeStyle = '#5a3000'; cx.lineWidth = 1;
+            cx.beginPath(); cx.moveTo(4,4); cx.lineTo(4,12); cx.stroke();
+            cx.beginPath(); cx.moveTo(8,2); cx.lineTo(8,14); cx.stroke();
+            cx.beginPath(); cx.moveTo(12,5); cx.lineTo(12,11); cx.stroke();
+            this.assets['effect_drought'] = c;
+        }
+        if (!await this._loadImage('npc_merchant', 'assets/sprites/npc_merchant.png')) {
+            const c = document.createElement('canvas'); c.width = 16; c.height = 16;
+            const cx = c.getContext('2d');
+            cx.fillStyle = '#cc8844'; cx.fillRect(3, 4, 10, 10);
+            cx.fillStyle = '#eecc77'; cx.fillRect(4, 2, 8, 4);
+            cx.fillStyle = '#884400'; cx.fillRect(5, 11, 2, 4); cx.fillRect(9, 11, 2, 4);
+            this.assets['npc_merchant'] = c;
+        }
+        if (!await this._loadImage('ui_event_banner', 'assets/sprites/ui_event_banner.png'))
+            this.assets['ui_event_banner'] = this._createFallbackCanvas('#3a2010', 128, 32);
+        return this.assets;
+    }
+}
+
+// Rebind to window to include AssetLoader
+window.AssetLoader = AssetLoader;

@@ -1,0 +1,1911 @@
+/* Pixel Dominion — Illuminated Parchment Design System */
+
+:root {
+    --parchment:      #f0e0b2;
+    --parchment-dark: #e0c890;
+    --parchment-edge: #c8a868;
+    --ink:            #2a1d10;
+    --ink-soft:       #5a4530;
+    --ink-faint:      #8a7050;
+    --gold:           #c89a3b;
+    --gold-dark:      #8c6618;
+    --wine:           #8c2c1c;
+    --wine-dark:      #5a1808;
+    --leaf:           #4a6b2a;
+    --leaf-dark:      #2a4a18;
+    --shadow:         rgba(40, 25, 10, 0.22);
+    --shadow-heavy:   rgba(40, 25, 10, 0.55);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    background: #1d1814;
+    overflow: hidden;
+    font-family: 'EB Garamond', Georgia, serif;
+    color: var(--ink);
+}
+
+#game-container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+}
+
+canvas { display: block; width: 100%; height: 100%; }
+
+/* ===== DEV FPS COUNTER ===== */
+#stats-counter {
+    position: absolute;
+    top: 8px;
+    left: 12px;
+    font-family: 'VT323', monospace;
+    font-size: 13px;
+    letter-spacing: 1px;
+    color: rgba(245, 226, 192, 0.4);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    pointer-events: none;
+    z-index: 5;
+}
+
+/* ===== PARCHMENT BASE (shared) ===== */
+#day-season,
+#raid-scroll,
+#build-menu,
+#hud-bar,
+#settings-drawer,
+.modal-parchment,
+.event-content {
+    background: linear-gradient(180deg, var(--parchment) 0%, var(--parchment-dark) 100%);
+    border: 2px solid var(--parchment-edge);
+    border-radius: 2px;
+    color: var(--ink);
+    box-shadow: 0 6px 18px var(--shadow), inset 0 0 0 1px rgba(255, 240, 200, 0.5);
+}
+
+/* ===== DAY / SEASON (top-left) ===== */
+#day-season {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    display: flex;
+    align-items: stretch;
+    pointer-events: none;
+    z-index: 10;
+    padding: 0;
+}
+
+.day-col {
+    padding: 8px 14px;
+    border-right: 1px solid var(--parchment-edge);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 56px;
+}
+
+.day-label {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--ink-faint);
+    line-height: 1;
+}
+
+#day-num {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 26px;
+    line-height: 1.1;
+    color: var(--wine-dark);
+    margin-top: 2px;
+}
+
+.season-col {
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#season-glyph {
+    font-size: 22px;
+    line-height: 1;
+    color: #4a6b2a;
+}
+
+.season-label {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--ink-faint);
+    line-height: 1;
+}
+
+#season-name {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 14px;
+    letter-spacing: 1px;
+    color: var(--ink);
+    margin-top: 2px;
+}
+
+/* ===== RAID BANNER (top-center) ===== */
+#raid-banner-wrap {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: none;
+    z-index: 20;
+}
+
+.raid-cords {
+    display: flex;
+    gap: 180px;
+    margin-bottom: -1px;
+}
+
+.raid-cord {
+    width: 2px;
+    height: 12px;
+    background: var(--wine-dark);
+}
+
+#raid-scroll {
+    position: relative;
+    padding: 10px 28px 16px;
+    text-align: center;
+    clip-path: polygon(0 0, 100% 0, 100% 82%, 90% 100%, 50% 89%, 10% 100%, 0 82%);
+    min-width: 240px;
+    border-radius: 0;
+    transition: background 0.4s, border-color 0.4s, color 0.4s;
+}
+
+#raid-scroll.warning {
+    background: linear-gradient(180deg, #c44b3a 0%, var(--wine-dark) 100%) !important;
+    border-color: var(--wine-dark) !important;
+}
+
+#raid-scroll.warning .raid-eyebrow,
+#raid-scroll.warning #res-raid-timer,
+#raid-scroll.warning .raid-wave-indicator {
+    color: #f5e2c0;
+}
+
+.raid-eyebrow {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--ink-faint);
+    opacity: 0.8;
+}
+
+#res-raid-timer {
+    font-family: 'VT323', monospace;
+    font-size: 30px;
+    letter-spacing: 2px;
+    line-height: 1;
+    color: var(--ink);
+    margin-top: 2px;
+}
+
+.raid-timer-row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    margin-top: 2px;
+}
+
+.raid-wave-indicator {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    color: var(--wine-dark);
+    white-space: nowrap;
+}
+
+/* ===== TIME CONTROLS (below raid scroll) ===== */
+#time-controls {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+    pointer-events: auto;
+}
+
+.time-ctrl-btn {
+    width: 28px;
+    height: 28px;
+    background: linear-gradient(180deg, var(--parchment), var(--parchment-dark));
+    border: 1px solid var(--parchment-edge);
+    border-radius: 50%;
+    color: var(--wine-dark);
+    font-family: 'IM Fell English SC', serif;
+    font-size: 13px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 6px var(--shadow);
+    transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+}
+
+.time-ctrl-btn:hover {
+    background: linear-gradient(180deg, #fff8e8, var(--parchment));
+    border-color: var(--wine);
+}
+
+.time-ctrl-btn.active {
+    background: linear-gradient(180deg, var(--wine), var(--wine-dark));
+    border-color: var(--wine-dark);
+    color: #f5e2c0;
+    box-shadow: 0 0 10px rgba(140, 44, 28, 0.5), 0 2px 6px var(--shadow);
+}
+
+/* ===== PAUSE OVERLAY ===== */
+#pause-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(20, 15, 10, 0.48);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 95;
+    pointer-events: none;
+}
+
+#pause-overlay.active { display: flex; }
+
+.pause-message {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 42px;
+    letter-spacing: 10px;
+    color: var(--parchment);
+    text-shadow: 0 3px 0 var(--wine-dark), 0 6px 28px rgba(0,0,0,0.9);
+    opacity: 0.95;
+}
+
+/* ===== CORNER ICONS (top-right) ===== */
+#corner-icons {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    display: flex;
+    gap: 6px;
+    z-index: 30;
+    pointer-events: auto;
+}
+
+.corner-btn {
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(180deg, var(--parchment), var(--parchment-dark));
+    border: 2px solid var(--parchment-edge);
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'IM Fell English SC', serif;
+    color: var(--wine-dark);
+    font-size: 17px;
+    box-shadow: 0 3px 8px var(--shadow);
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s;
+}
+
+.corner-btn:hover {
+    background: linear-gradient(180deg, #fff8e8, var(--parchment));
+    border-color: var(--wine);
+}
+
+/* ===== SETTINGS DRAWER ===== */
+#settings-drawer {
+    position: absolute;
+    top: 52px;
+    right: 12px;
+    width: 240px;
+    padding: 14px 16px;
+    z-index: 29;
+    pointer-events: auto;
+    background: linear-gradient(180deg, var(--parchment) 0%, var(--parchment-dark) 100%);
+    border: 2px solid var(--parchment-edge);
+    border-radius: 2px;
+    box-shadow: 0 8px 24px var(--shadow-heavy), inset 0 0 0 1px rgba(255,240,200,0.5);
+}
+
+#settings-drawer.hidden { display: none; }
+
+.drawer-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 14px;
+    letter-spacing: 3px;
+    color: var(--wine-dark);
+    border-bottom: 1px solid var(--parchment-edge);
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+    text-align: center;
+}
+
+.drawer-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.drawer-label {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    color: var(--ink-soft);
+    width: 52px;
+    flex-shrink: 0;
+}
+
+.parch-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 10px;
+    background: rgba(40, 25, 10, 0.18);
+    border: 1px solid var(--parchment-edge);
+    border-radius: 1px;
+    outline: none;
+    cursor: pointer;
+}
+
+.parch-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--gold), var(--gold-dark) 75%);
+    border: 1px solid var(--wine-dark);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    cursor: pointer;
+}
+
+.parch-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--gold), var(--gold-dark) 75%);
+    border: 1px solid var(--wine-dark);
+    cursor: pointer;
+}
+
+.drawer-actions {
+    border-top: 1px solid var(--parchment-edge);
+    margin-top: 10px;
+    padding-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.drawer-shortcuts {
+    border-top: 1px solid var(--parchment-edge);
+    margin-top: 10px;
+    padding-top: 8px;
+}
+
+.shortcut-line {
+    font-family: 'EB Garamond', serif;
+    font-size: 11px;
+    color: var(--ink-faint);
+    font-style: italic;
+    letter-spacing: 0.5px;
+    line-height: 1.8;
+}
+
+/* ===== SCROLL BUTTON (shared action button style) ===== */
+.scroll-btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 10px;
+    background: linear-gradient(180deg, var(--parchment), var(--parchment-dark));
+    border: 1px solid var(--parchment-edge);
+    border-radius: 2px;
+    color: var(--ink);
+    font-family: 'IM Fell English SC', serif;
+    font-size: 12px;
+    letter-spacing: 2px;
+    cursor: pointer;
+    width: 100%;
+    transition: background 0.12s, border-color 0.12s;
+}
+
+.scroll-btn:hover {
+    background: linear-gradient(180deg, #fff8e8, var(--parchment));
+    border-color: var(--gold);
+}
+
+.scroll-btn.danger {
+    color: var(--wine);
+}
+
+.scroll-btn.danger:hover {
+    border-color: var(--wine);
+    background: rgba(140, 44, 28, 0.06);
+}
+
+.scroll-btn.wine {
+    background: linear-gradient(180deg, var(--wine), var(--wine-dark));
+    border-color: var(--wine-dark);
+    color: #f5e2c0;
+    justify-content: center;
+}
+
+.scroll-btn.wine:hover {
+    background: linear-gradient(180deg, #a03328, var(--wine));
+    border-color: var(--wine);
+}
+
+/* ===== BUILD MENU (right panel) ===== */
+#build-menu {
+    position: absolute;
+    top: 56px;
+    right: 16px;
+    width: 256px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    pointer-events: auto;
+    z-index: 20;
+    max-height: calc(100vh - 140px);
+    overflow: hidden;
+}
+
+#build-header {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 17px;
+    letter-spacing: 4px;
+    color: var(--wine-dark);
+    text-align: center;
+    padding: 9px 16px 6px;
+    border-bottom: 1px solid var(--parchment-edge);
+    flex-shrink: 0;
+}
+
+#build-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--parchment-edge);
+    background: rgba(140, 102, 24, 0.07);
+    flex-shrink: 0;
+}
+
+.build-tab {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 6px 4px;
+    font-family: 'IM Fell English SC', serif;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    color: var(--ink-faint);
+    cursor: pointer;
+    transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+
+.build-tab.active {
+    background: var(--parchment);
+    border-bottom-color: var(--wine);
+    color: var(--wine-dark);
+}
+
+.build-tab:hover:not(.active) {
+    color: var(--ink-soft);
+}
+
+#build-items {
+    flex: 1;
+    overflow-y: auto;
+    padding: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--parchment-edge) transparent;
+}
+
+#build-items::-webkit-scrollbar { width: 5px; }
+#build-items::-webkit-scrollbar-track { background: transparent; }
+#build-items::-webkit-scrollbar-thumb { background: var(--parchment-edge); border-radius: 3px; }
+
+/* Build item row */
+.build-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 7px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+    transition: background 0.1s, border-color 0.1s;
+    font-family: 'EB Garamond', serif;
+}
+
+.build-btn:hover:not(:disabled):not(.disabled) {
+    background: rgba(140, 102, 24, 0.08);
+    border-color: var(--parchment-edge);
+}
+
+.build-btn.active {
+    background: rgba(140, 44, 28, 0.12);
+    border-color: var(--wine);
+}
+
+.build-btn:disabled,
+.build-btn.disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.build-sprite-frame {
+    width: 34px;
+    height: 34px;
+    background: rgba(90, 63, 37, 0.14);
+    border: 1px solid var(--parchment-edge);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.build-sprite-frame canvas {
+    image-rendering: pixelated;
+    display: block;
+}
+
+.build-item-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.build-item-name {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+    color: var(--ink);
+    line-height: 1.15;
+}
+
+.build-btn.active .build-item-name { color: var(--wine-dark); }
+
+.build-item-costs {
+    display: flex;
+    gap: 5px;
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--ink-soft);
+    align-items: center;
+    font-family: 'EB Garamond', serif;
+}
+
+.build-cost-gold { color: var(--gold-dark); }
+.build-cost-wood { color: #6b4a2b; }
+.build-cost-iron { color: #5a5a7a; }
+
+.build-item-yield {
+    font-family: 'EB Garamond', serif;
+    font-style: italic;
+    font-size: 10px;
+    color: var(--leaf-dark);
+    text-align: right;
+    max-width: 68px;
+    flex-shrink: 0;
+    line-height: 1.2;
+}
+
+.build-btn.disabled .build-item-yield,
+.build-btn:disabled .build-item-yield { color: var(--ink-faint); }
+
+/* ===== BOTTOM HUD BAR ===== */
+#hud-bar {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: stretch;
+    padding: 0;
+    z-index: 20;
+    pointer-events: none;
+}
+
+.hud-pod {
+    display: flex;
+    align-items: stretch;
+    padding: 6px 14px;
+    border-right: 1px solid var(--parchment-edge);
+}
+
+.hud-pod.last { border-right: none; }
+
+#pod-garrison {
+    pointer-events: auto;
+}
+
+/* ===== COMBAT MODE BUTTONS ===== */
+#combat-mode-btns {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-left: 10px;
+    align-self: center;
+    pointer-events: auto;
+}
+
+.combat-mode-btn {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 10px;
+    letter-spacing: 1px;
+    padding: 3px 7px;
+    background: linear-gradient(180deg, #2a1f0f, #1a1208);
+    color: var(--ink-soft);
+    border: 1px solid var(--parchment-edge);
+    border-radius: 2px;
+    cursor: pointer;
+    white-space: nowrap;
+    pointer-events: auto;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.combat-mode-btn:hover {
+    background: linear-gradient(180deg, #3a2a10, #2a1f0f);
+    border-color: var(--gold-dark);
+    color: var(--parchment);
+}
+
+.combat-mode-btn.active {
+    background: linear-gradient(180deg, #7a5a10, #5a3e08);
+    border-color: var(--gold);
+    color: var(--gold);
+}
+
+.pod-label {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    font-family: 'IM Fell English SC', serif;
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--gold-dark);
+    align-self: center;
+    margin-right: 10px;
+    flex-shrink: 0;
+}
+
+.pod-chips {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.res-chip {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 0;
+}
+
+.chip-icon {
+    font-size: 16px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.gold-icon    { color: var(--gold-dark); }
+.wood-icon    { color: #7a5830; }
+.stone-icon   { color: #7a7a7a; }
+.iron-icon    { color: #7a7aaa; }
+.citizen-icon { color: var(--ink-soft); }
+.food-icon    { color: var(--leaf); }
+.happy-icon   { color: #c83a3a; }
+.defense-icon { color: #3a4d6b; }
+.sword-icon   { color: var(--ink-soft); }
+.bow-icon     { color: var(--ink-soft); }
+.knight-icon  { color: var(--ink-soft); }
+
+.chip-label {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    color: var(--ink-faint);
+    line-height: 1;
+    text-transform: uppercase;
+}
+
+.chip-value {
+    font-family: 'EB Garamond', serif;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ink);
+    line-height: 1.05;
+    white-space: nowrap;
+}
+
+.chip-value.treasure { color: var(--gold-dark); }
+.chip-value.healthy  { color: var(--leaf-dark); }
+.chip-value.low      { color: #a85a18; }
+.chip-value.critical { color: var(--wine); }
+
+/* ===== HAPPINESS TOOLTIP ===== */
+.ht-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    line-height: 1.4;
+}
+.ht-label {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 10px;
+    color: #e8d5a0;
+    white-space: nowrap;
+}
+.ht-signs {
+    font-family: 'VT323', monospace;
+    font-size: 13px;
+    font-weight: bold;
+}
+.ht-signs.pos { color: #ffd700; }
+.ht-signs.neg { color: #cc4444; }
+
+/* ===== RAID WARNING VIGNETTE ===== */
+#raid-warning {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    display: none;
+    z-index: 15;
+}
+
+#raid-warning.active {
+    display: block;
+    animation: raid-vignette 0.6s ease-in-out infinite;
+}
+
+@keyframes raid-vignette {
+    0%, 100% { box-shadow: inset 0 0 100px rgba(160, 35, 18, 0.3); }
+    50%       { box-shadow: inset 0 0 100px rgba(200, 50, 25, 0.6); }
+}
+
+/* ===== EVENT BANNER ===== */
+#event-banner {
+    position: absolute;
+    top: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    align-items: stretch;
+    box-shadow: 0 6px 18px var(--shadow-heavy);
+    pointer-events: none;
+    z-index: 40;
+    min-width: 380px;
+}
+
+.event-wine-bar {
+    width: 8px;
+    background: linear-gradient(180deg, var(--wine), var(--wine-dark));
+    flex-shrink: 0;
+}
+
+.event-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 18px;
+    border-left: none !important;
+    border-radius: 0 2px 2px 0;
+}
+
+.event-seal {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #b04030, var(--wine-dark) 70%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #f5e2c0;
+    font-size: 16px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4), inset -1px -1px 3px rgba(0,0,0,0.3);
+    border: 1px solid var(--wine-dark);
+}
+
+.event-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 14px;
+    letter-spacing: 1.5px;
+    color: var(--wine-dark);
+    line-height: 1.1;
+}
+
+.event-desc {
+    font-family: 'EB Garamond', serif;
+    font-size: 13px;
+    color: var(--ink-soft);
+    font-style: italic;
+    margin-top: 2px;
+}
+
+/* ===== STATS OVERLAY (TAB) ===== */
+#stats-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(29, 24, 20, 0.82);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 90;
+    pointer-events: none;
+}
+
+#stats-overlay.visible { display: flex; }
+
+.stats-panel {
+    background: linear-gradient(180deg, var(--parchment) 0%, var(--parchment-dark) 100%);
+    border: 2px solid var(--parchment-edge);
+    border-radius: 2px;
+    padding: 22px 28px;
+    min-width: 400px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,240,200,0.5);
+}
+
+.stats-panel-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 16px;
+    letter-spacing: 3px;
+    color: var(--wine-dark);
+    border-bottom: 1px solid var(--parchment-edge);
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+}
+
+.stats-ledger-grid,
+.stats-income-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+    margin-bottom: 10px;
+}
+
+.ledger-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: 'EB Garamond', serif;
+    font-size: 14px;
+    border-bottom: 1px dotted var(--parchment-edge);
+    padding-bottom: 2px;
+}
+
+.ledger-label { color: var(--ink-soft); font-style: italic; }
+.ledger-value { color: var(--ink); font-weight: 600; }
+.ledger-value.positive { color: var(--leaf-dark); }
+
+.stats-income-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--gold-dark);
+    margin-bottom: 7px;
+    border-top: 1px solid var(--parchment-edge);
+    padding-top: 10px;
+}
+
+.stats-footer {
+    margin-top: 14px;
+    font-family: 'EB Garamond', serif;
+    font-style: italic;
+    font-size: 12px;
+    color: var(--ink-faint);
+    text-align: center;
+}
+
+/* ===== TUTORIAL OVERLAY ===== */
+.tutorial-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(29, 24, 20, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+}
+
+.tutorial-overlay.hidden {
+    display: none;
+}
+
+.tutorial-box {
+    background: linear-gradient(180deg, var(--parchment) 0%, var(--parchment-dark) 100%);
+    border: 2px solid var(--wine);
+    border-radius: 4px;
+    padding: 28px 32px;
+    max-width: 380px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.tutorial-page.hidden {
+    display: none;
+}
+
+.tutorial-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 28px;
+    letter-spacing: 3px;
+    color: var(--wine-dark);
+    text-align: center;
+    margin-bottom: 22px;
+}
+
+.tutorial-tips {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-bottom: 24px;
+}
+
+.tutorial-tip {
+    font-family: 'EB Garamond', serif;
+    font-size: 15px;
+    color: var(--ink);
+    line-height: 1.5;
+    padding-left: 8px;
+}
+
+.tutorial-tip strong {
+    font-weight: 600;
+    color: var(--wine-dark);
+}
+
+.tutorial-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 6px;
+}
+
+#tutorial-dismiss,
+#tutorial-next {
+    min-width: 120px;
+}
+
+#tutorial-dismiss.hidden,
+#tutorial-next.hidden {
+    display: none;
+}
+
+/* ===== MODALS ===== */
+.modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(29, 24, 20, 0.75);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+.modal-overlay.open { display: flex; }
+
+.modal-parchment {
+    padding: 0;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+}
+
+/* ===== TRADE MODAL ===== */
+.trade-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 22px 14px;
+    border-bottom: 1px solid var(--parchment-edge);
+}
+
+.trade-seal {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--gold), var(--gold-dark) 70%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #f5e2c0;
+    font-family: 'IM Fell English SC', serif;
+    font-size: 22px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    border: 1px solid var(--gold-dark);
+}
+
+.trade-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 17px;
+    letter-spacing: 3px;
+    color: var(--wine-dark);
+}
+
+.trade-subtitle {
+    font-family: 'EB Garamond', serif;
+    font-style: italic;
+    font-size: 13px;
+    color: var(--ink-faint);
+    margin-top: 2px;
+}
+
+#trade-deals {
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 380px;
+}
+
+.trade-deal-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 9px;
+    border: 1px solid var(--parchment-edge);
+    border-radius: 2px;
+    background: rgba(140, 102, 24, 0.04);
+    transition: background 0.1s, border-color 0.1s;
+}
+
+.trade-deal-row:hover {
+    background: rgba(140, 102, 24, 0.09);
+    border-color: var(--gold);
+}
+
+.trade-deal-btn {
+    background: linear-gradient(180deg, var(--wine), var(--wine-dark));
+    border: 1px solid var(--wine-dark);
+    border-radius: 2px;
+    color: #f5e2c0;
+    font-family: 'IM Fell English SC', serif;
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    padding: 5px 10px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.trade-deal-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.trade-deal-info { flex: 1; }
+
+.trade-deal-label {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 13px;
+    color: var(--ink);
+    letter-spacing: 0.5px;
+}
+
+.trade-deal-cost {
+    font-family: 'EB Garamond', serif;
+    font-style: italic;
+    font-size: 11px;
+    color: var(--ink-faint);
+    margin-top: 1px;
+}
+
+.trade-footer {
+    padding: 10px 14px;
+    border-top: 1px solid var(--parchment-edge);
+    text-align: center;
+}
+
+/* ===== RAID RESULT MODAL ===== */
+.raid-modal-box { width: 400px; }
+
+.raid-modal-top {
+    padding: 26px 28px 16px;
+    text-align: center;
+    border-bottom: 1px solid var(--parchment-edge);
+}
+
+.raid-wax-seal {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #f5e2c0;
+    font-family: 'IM Fell English SC', serif;
+    font-size: 26px;
+    margin: 0 auto 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4), inset -2px -2px 4px rgba(0,0,0,0.3);
+    border: 1px solid var(--wine-dark);
+    background: radial-gradient(circle at 35% 30%, #b04030, var(--wine-dark) 70%);
+}
+
+.raid-wax-seal.victory {
+    background: radial-gradient(circle at 35% 30%, #5a8a4a, var(--leaf-dark) 70%);
+    border-color: var(--leaf-dark);
+}
+
+.raid-wax-seal.defeat {
+    background: radial-gradient(circle at 35% 30%, #b04030, var(--wine-dark) 70%);
+    border-color: var(--wine-dark);
+}
+
+.raid-modal-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 28px;
+    letter-spacing: 4px;
+    margin-bottom: 4px;
+}
+
+.raid-modal-title.victory { color: var(--leaf-dark); }
+.raid-modal-title.defeat  { color: var(--wine-dark); }
+
+.raid-modal-subtitle {
+    font-family: 'EB Garamond', serif;
+    font-size: 14px;
+    color: var(--ink-soft);
+    font-style: italic;
+}
+
+.raid-modal-ledger {
+    padding: 12px 22px;
+    background: rgba(140, 102, 24, 0.06);
+    border-bottom: 1px solid var(--parchment-edge);
+}
+
+.modal-body-line {
+    font-family: 'EB Garamond', serif;
+    font-size: 14px;
+    color: var(--ink-soft);
+    border-bottom: 1px dotted var(--parchment-edge);
+    padding: 4px 0;
+    line-height: 1.4;
+}
+
+.raid-modal-footer {
+    padding: 12px 16px;
+    text-align: center;
+}
+
+/* ===== EXPANSION / AUTOSAVE ===== */
+#expansion-banner {
+    position: absolute;
+    top: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(180deg, var(--parchment), var(--parchment-dark));
+    border: 2px solid var(--gold);
+    color: var(--wine-dark);
+    font-family: 'IM Fell English SC', serif;
+    font-size: 20px;
+    letter-spacing: 4px;
+    padding: 10px 24px;
+    display: none;
+    z-index: 70;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.5s ease-in-out;
+    box-shadow: 0 6px 20px var(--shadow-heavy);
+}
+
+#expansion-banner.active { display: block; opacity: 1; }
+
+#autosave-banner {
+    position: absolute;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(180deg, var(--parchment), var(--parchment-dark));
+    border: 1px solid var(--parchment-edge);
+    color: var(--ink-faint);
+    font-family: 'IM Fell English SC', serif;
+    font-size: 11px;
+    letter-spacing: 3px;
+    padding: 5px 14px;
+    display: none;
+    z-index: 60;
+    pointer-events: none;
+}
+
+#autosave-banner.active {
+    display: block;
+    animation: autosave-flash 0.4s ease-in-out;
+}
+
+@keyframes autosave-flash {
+    0%   { opacity: 0; }
+    20%  { opacity: 1; }
+    80%  { opacity: 1; }
+    100% { opacity: 0; }
+}
+
+/* ===== START SCREEN ===== */
+#start-screen {
+    position: absolute;
+    inset: 0;
+    background: #1d1814;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+}
+
+.start-vignette {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center, rgba(40,25,10,0.35), rgba(0,0,0,0.72));
+    pointer-events: none;
+}
+
+.start-center {
+    position: relative;
+    text-align: center;
+    z-index: 1;
+}
+
+.start-eyebrow {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 13px;
+    letter-spacing: 8px;
+    color: var(--gold);
+    margin-bottom: 8px;
+    opacity: 0.85;
+}
+
+#start-logo {
+    max-width: 320px;
+    width: 100%;
+    margin-bottom: 12px;
+    image-rendering: pixelated;
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+#start-title {
+    display: none;
+    font-family: 'IM Fell English SC', serif;
+    font-size: 64px;
+    letter-spacing: 8px;
+    color: var(--parchment);
+    text-shadow: 0 4px 0 var(--wine-dark), 0 6px 24px rgba(0,0,0,0.7);
+    line-height: 1;
+    margin-bottom: 8px;
+}
+
+.start-tagline {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 14px;
+    letter-spacing: 6px;
+    color: var(--parchment-dark);
+    opacity: 0.7;
+    margin-bottom: 18px;
+}
+
+.start-hints {
+    font-family: 'EB Garamond', serif;
+    font-style: italic;
+    font-size: 14px;
+    color: rgba(200, 168, 104, 0.55);
+    letter-spacing: 0.5px;
+    margin-bottom: 28px;
+    line-height: 1.6;
+}
+
+.start-difficulty-shell {
+    width: min(760px, calc(100vw - 40px));
+    margin: 0 auto 22px;
+}
+
+.start-difficulty-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 12px;
+    letter-spacing: 4px;
+    color: var(--gold);
+    opacity: 0.9;
+    margin-bottom: 12px;
+}
+
+.difficulty-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.difficulty-card {
+    appearance: none;
+    border: 1px solid rgba(200, 168, 104, 0.38);
+    background: linear-gradient(180deg, rgba(44, 29, 16, 0.94), rgba(23, 16, 12, 0.96));
+    color: var(--parchment);
+    padding: 14px 14px 12px;
+    text-align: left;
+    cursor: pointer;
+    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+    min-height: 132px;
+}
+
+.difficulty-card:hover {
+    transform: translateY(-1px);
+    border-color: rgba(200, 168, 104, 0.62);
+}
+
+.difficulty-card.active {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 1px rgba(200, 168, 104, 0.38), 0 10px 24px rgba(0, 0, 0, 0.28);
+    background: linear-gradient(180deg, rgba(77, 41, 20, 0.96), rgba(34, 19, 13, 0.98));
+}
+
+.difficulty-card-name {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 18px;
+    letter-spacing: 1px;
+    color: var(--parchment);
+    margin-bottom: 5px;
+}
+
+.difficulty-card-tag {
+    font-family: 'EB Garamond', serif;
+    font-style: italic;
+    font-size: 13px;
+    color: rgba(240, 230, 200, 0.72);
+    margin-bottom: 10px;
+}
+
+.difficulty-card-lines {
+    display: grid;
+    gap: 5px;
+    font-family: 'EB Garamond', serif;
+    font-size: 13px;
+    color: rgba(240, 230, 200, 0.84);
+    line-height: 1.35;
+}
+
+.start-btn {
+    font-size: 15px;
+    padding: 11px 36px;
+    letter-spacing: 4px;
+    display: inline-flex;
+    width: auto;
+}
+
+.start-leaderboard-btn {
+    font-size: 11px;
+    padding: 6px 22px;
+    letter-spacing: 3px;
+    display: inline-flex;
+    width: auto;
+    margin-bottom: 12px;
+    background: rgba(240, 224, 178, 0.08);
+    border-color: rgba(200, 168, 104, 0.4);
+    color: var(--gold);
+}
+
+@media (max-width: 780px) {
+    .difficulty-options {
+        grid-template-columns: 1fr;
+    }
+
+    .difficulty-card {
+        min-height: 0;
+    }
+}
+
+/* ===== STONE COST STYLE ===== */
+.build-cost-stone { color: #5a5a5a; font-family: 'EB Garamond', serif; }
+
+/* ===== DEFEAT WARNING BANNER ===== */
+#defeat-warning {
+    position: absolute;
+    top: 130px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 60;
+    pointer-events: none;
+}
+#defeat-warning.hidden { display: none; }
+.defeat-warning-box {
+    background: linear-gradient(180deg, #c44b3a 0%, var(--wine-dark) 100%);
+    border: 2px solid var(--wine);
+    border-radius: 2px;
+    color: #f5e2c0;
+    padding: 10px 24px;
+    text-align: center;
+    box-shadow: 0 6px 20px var(--shadow-heavy);
+    animation: pulse-border 1s infinite alternate;
+}
+.defeat-warning-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 18px;
+    letter-spacing: 3px;
+    line-height: 1.2;
+}
+.defeat-warning-timer {
+    font-family: 'VT323', monospace;
+    font-size: 24px;
+    margin-top: 4px;
+    letter-spacing: 1px;
+}
+@keyframes pulse-border {
+    0% { border-color: var(--wine); box-shadow: 0 6px 20px rgba(140, 44, 28, 0.4); }
+    100% { border-color: #ff4444; box-shadow: 0 6px 20px rgba(255, 68, 68, 0.8); }
+}
+
+/* ===== GAME OVER / VICTORY / DEFEAT MODAL ===== */
+.game-over-box {
+    width: 460px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+.game-over-top {
+    padding: 24px 28px 16px;
+    text-align: center;
+    border-bottom: 1px solid var(--parchment-edge);
+}
+.game-over-wax-seal {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #f5e2c0;
+    font-family: 'IM Fell English SC', serif;
+    font-size: 26px;
+    margin: 0 auto 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4), inset -2px -2px 4px rgba(0,0,0,0.3);
+    border: 1px solid var(--wine-dark);
+    background: radial-gradient(circle at 35% 30%, #b04030, var(--wine-dark) 70%);
+}
+.game-over-wax-seal.victory {
+    background: radial-gradient(circle at 35% 30%, #5a8a4a, var(--leaf-dark) 70%);
+    border-color: var(--leaf-dark);
+}
+.game-over-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 32px;
+    letter-spacing: 4px;
+    line-height: 1.1;
+    margin-bottom: 6px;
+}
+.game-over-title.victory { color: var(--leaf-dark); }
+.game-over-title.defeat { color: var(--wine-dark); }
+.game-over-subtitle {
+    font-family: 'EB Garamond', serif;
+    font-size: 14px;
+    color: var(--ink-soft);
+    font-style: italic;
+}
+.game-over-stats-ledger {
+    padding: 16px 28px;
+    background: rgba(140, 102, 24, 0.05);
+    border-bottom: 1px solid var(--parchment-edge);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 16px;
+}
+.game-over-footer {
+    padding: 16px 28px 24px;
+    text-align: center;
+}
+
+/* ===== LEADERBOARD ENTRY PANEL ===== */
+#leaderboard-entry-panel {
+    padding: 16px 28px;
+    border-bottom: 1px solid var(--parchment-edge);
+    background: rgba(200, 168, 104, 0.12);
+    text-align: center;
+}
+#leaderboard-entry-panel.hidden { display: none; }
+.entry-message {
+    font-family: 'EB Garamond', serif;
+    font-style: italic;
+    font-size: 14px;
+    color: var(--wine-dark);
+    margin-bottom: 10px;
+}
+.entry-row {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+#leaderboard-name-input {
+    padding: 8px 12px;
+    border: 1px solid var(--parchment-edge);
+    border-radius: 2px;
+    background: #fffdf5;
+    font-family: 'EB Garamond', serif;
+    font-size: 15px;
+    color: var(--ink);
+    flex: 1;
+    max-width: 240px;
+}
+#leaderboard-name-input:focus {
+    outline: none;
+    border-color: var(--wine);
+}
+
+/* ===== LEADERBOARD TABLE ===== */
+.leaderboard-container {
+    padding: 16px 28px;
+    border-bottom: 1px solid var(--parchment-edge);
+}
+.leaderboard-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: var(--gold-dark);
+    text-align: center;
+    margin-bottom: 10px;
+}
+#leaderboard-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'EB Garamond', serif;
+    font-size: 14px;
+}
+#leaderboard-table th {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 10px;
+    letter-spacing: 1px;
+    color: var(--ink-faint);
+    border-bottom: 1px solid var(--parchment-edge);
+    padding: 4px;
+    text-align: left;
+}
+#leaderboard-table td {
+    padding: 6px 4px;
+    border-bottom: 1px dotted var(--parchment-edge);
+    color: var(--ink-soft);
+}
+#leaderboard-table tr:last-child td {
+    border-bottom: none;
+}
+#leaderboard-table td.highlight {
+    font-weight: bold;
+    color: var(--wine-dark);
+}
+
+/* ===== START SCREEN LEADERBOARD ===== */
+.start-leaderboard-container.hidden { display: none; }
+.start-leaderboard-container {
+    margin: 20px auto 24px;
+    max-width: 440px;
+    padding: 12px 18px;
+    background: rgba(240, 224, 178, 0.1);
+    border: 1px solid rgba(200, 168, 104, 0.25);
+    border-radius: 2px;
+}
+.start-leaderboard-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'EB Garamond', serif;
+    font-size: 13px;
+    color: rgba(245, 226, 192, 0.85);
+}
+.start-leaderboard-table th {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: var(--gold);
+    border-bottom: 1px solid rgba(200, 168, 104, 0.2);
+    padding: 4px;
+    text-align: left;
+}
+.start-leaderboard-table td {
+    padding: 4px;
+    border-bottom: 1px dotted rgba(200, 168, 104, 0.1);
+}
+.start-leaderboard-table tr:last-child td {
+    border-bottom: none;
+}
+
+/* ===== RESEARCH MODAL ===== */
+.research-modal-box {
+    width: 440px;
+}
+.research-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--parchment-edge);
+    position: relative;
+}
+.research-seal {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--gold), var(--gold-dark) 70%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #f5e2c0;
+    font-family: 'IM Fell English SC', serif;
+    font-size: 20px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    border: 1px solid var(--gold-dark);
+}
+.research-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 16px;
+    letter-spacing: 2.5px;
+    color: var(--wine-dark);
+}
+.research-subtitle {
+    font-family: 'EB Garamond', serif;
+    font-style: italic;
+    font-size: 12px;
+    color: var(--ink-faint);
+    margin-top: 1px;
+}
+.research-close-x {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    background: transparent;
+    border: none;
+    font-size: 24px;
+    line-height: 1;
+    color: var(--ink-faint);
+    cursor: pointer;
+    transition: color 0.12s;
+}
+.research-close-x:hover {
+    color: var(--wine);
+}
+#research-upgrades-list {
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.upgrade-card {
+    border: 1px solid var(--parchment-edge);
+    border-radius: 2px;
+    background: rgba(140, 102, 24, 0.03);
+    padding: 10px 14px;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    transition: background 0.12s, border-color 0.12s;
+}
+.upgrade-card:hover {
+    background: rgba(140, 102, 24, 0.07);
+    border-color: var(--gold);
+}
+.upgrade-card-info {
+    flex: 1;
+    z-index: 1;
+}
+.upgrade-card-name {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 14px;
+    letter-spacing: 1px;
+    color: var(--ink);
+}
+.upgrade-card-desc {
+    font-family: 'EB Garamond', serif;
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+    line-height: 1.2;
+}
+.upgrade-card-cost {
+    font-family: 'EB Garamond', serif;
+    font-size: 11px;
+    color: var(--ink-faint);
+    font-style: italic;
+    margin-top: 3px;
+    display: flex;
+    gap: 8px;
+}
+.upgrade-card-cost span {
+    display: inline-flex;
+    align-items: center;
+}
+.upgrade-card-action {
+    z-index: 1;
+    min-width: 100px;
+    text-align: right;
+}
+.upgrade-card-btn {
+    padding: 6px 12px;
+    font-size: 11px;
+}
+.upgrade-card-status {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    font-weight: bold;
+}
+.upgrade-card-status.unlocked {
+    color: var(--leaf-dark);
+}
+.upgrade-card-status.researching {
+    color: var(--wine);
+    animation: text-pulse 1s infinite alternate;
+}
+.upgrade-card-status.locked {
+    color: var(--ink-faint);
+}
+.upgrade-progress-overlay {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    background: rgba(255, 221, 87, 0.08);
+    pointer-events: none;
+    z-index: 0;
+}
+@keyframes text-pulse {
+    0% { opacity: 0.6; }
+    100% { opacity: 1.0; }
+}
+
+/* ===== DIPLOMACY MODAL ===== */
+.diplomacy-modal-box {
+    min-width: 500px;
+    max-width: 640px;
+    padding: 28px 30px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.diplomacy-eyebrow {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 0.72em;
+    letter-spacing: 0.22em;
+    color: var(--ink-soft);
+    text-align: center;
+    text-transform: uppercase;
+}
+
+.diplomacy-desc {
+    font-size: 1.05em;
+    color: var(--ink);
+    text-align: center;
+    line-height: 1.55;
+    padding: 0 8px;
+    font-style: italic;
+}
+
+.diplomacy-choices {
+    display: flex;
+    gap: 14px;
+}
+
+.diplomacy-choice-btn {
+    flex: 1;
+    background: rgba(40, 25, 10, 0.10);
+    border: 1px solid var(--parchment-edge);
+    border-radius: 3px;
+    padding: 14px 12px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.12s, border-color 0.12s;
+}
+
+.diplomacy-choice-btn:hover {
+    background: rgba(40, 25, 10, 0.22);
+    border-color: var(--gold);
+}
+
+.dipl-label {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 0.95em;
+    color: var(--gold-dark);
+    display: block;
+    text-align: center;
+}
+
+.dipl-cost {
+    font-size: 0.82em;
+    color: var(--ink-soft);
+    display: block;
+    text-align: center;
+    line-height: 1.4;
+}
+
+/* ===== BUILDING INSPECTOR PANEL ===== */
+#building-panel {
+    position: fixed;
+    z-index: 500;
+    min-width: 180px;
+    max-width: 240px;
+    background: var(--parchment);
+    border: 2px solid var(--wine);
+    border-radius: 4px;
+    padding: 10px 12px 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    pointer-events: all;
+}
+
+#building-panel.hidden { display: none; }
+
+.panel-close-btn {
+    position: absolute;
+    top: 5px;
+    right: 7px;
+    background: none;
+    border: none;
+    color: var(--ink-soft);
+    font-size: 0.9em;
+    cursor: pointer;
+    padding: 0 2px;
+    line-height: 1;
+}
+
+.panel-close-btn:hover { color: var(--wine); }
+
+.panel-name {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 0.95em;
+    color: var(--gold-dark);
+    letter-spacing: 0.08em;
+    padding-right: 18px;
+}
+
+.panel-stats {
+    font-size: 0.78em;
+    color: var(--ink);
+    line-height: 1.6;
+}
+
+.panel-stats div { white-space: nowrap; }
+
+.panel-btn {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--parchment-edge);
+    cursor: pointer;
+    font-family: 'IM Fell English SC', serif;
+    font-size: 0.78em;
+    letter-spacing: 0.06em;
+    background: rgba(40, 25, 10, 0.10);
+    color: var(--ink);
+    transition: background 0.1s, border-color 0.1s;
+    text-align: center;
+}
+
+.panel-btn:hover:not(:disabled) {
+    background: rgba(40, 25, 10, 0.22);
+    border-color: var(--gold);
+}
+
+.panel-btn-upgrade { border-color: var(--gold-dark); color: var(--gold-dark); }
+.panel-btn-upgrade:hover:not(:disabled) { background: rgba(200, 168, 75, 0.18); border-color: var(--gold); }
+.panel-btn-upgrade.panel-btn-upgraded { color: var(--ink-soft); border-color: var(--parchment-edge); cursor: default; }
+
+.panel-btn-demolish { color: var(--wine); border-color: var(--wine-dark); }
+.panel-btn-demolish:hover { background: rgba(122, 28, 28, 0.15) !important; border-color: var(--wine) !important; }
