@@ -1266,6 +1266,11 @@ export function _buildGrassCache() {
 export function renderWorldOverlay() {
     if (!gameState.started) return;
     const { x: camX, y: camY, zoom } = camera;
+    const viewMinX = camX - TILE_SIZE;
+    const viewMinY = camY - TILE_SIZE;
+    const viewMaxX = camX + canvas.width / zoom + TILE_SIZE;
+    const viewMaxY = camY + canvas.height / zoom + TILE_SIZE;
+    const isVisibleUnit = u => u.x >= viewMinX && u.x <= viewMaxX && u.y >= viewMinY && u.y <= viewMaxY;
     ctx.save();
     ctx.setTransform(zoom, 0, 0, zoom, -camX * zoom, -camY * zoom);
     ctx.imageSmoothingEnabled = false;
@@ -1347,7 +1352,10 @@ export function renderWorldOverlay() {
     ctx.globalAlpha = 1.0;
 
     const soldierAsset = assets['citizen_soldier'];
+    let renderedSoldiers = 0;
     for (const sol of soldiers) {
+        if (!isVisibleUnit(sol)) continue;
+        if (renderedSoldiers++ >= 120) break;
         if (soldierAsset) {
             ctx.drawImage(soldierAsset, sol.x - 8, sol.y - 8, 16, 16);
         } else {
@@ -1356,17 +1364,21 @@ export function renderWorldOverlay() {
             ctx.strokeStyle = '#ffdd57'; ctx.lineWidth = 1.5;
             ctx.beginPath(); ctx.arc(sol.x, sol.y, 6, 0, Math.PI * 2); ctx.stroke();
         }
-        if (sol.hp < 100) {
+        const solMaxHp = sol.maxHp || 100;
+        if (sol.hp < solMaxHp) {
             const bw = 16;
             ctx.fillStyle = '#333333';
             ctx.fillRect(sol.x - bw / 2, sol.y - 12, bw, 2);
             ctx.fillStyle = '#4488ff';
-            ctx.fillRect(sol.x - bw / 2, sol.y - 12, bw * (sol.hp / 100), 2);
+            ctx.fillRect(sol.x - bw / 2, sol.y - 12, bw * (sol.hp / solMaxHp), 2);
         }
     }
 
     const archerAsset = assets['citizen_archer'];
+    let renderedArchers = 0;
     for (const a of archers) {
+        if (!isVisibleUnit(a)) continue;
+        if (renderedArchers++ >= 80) break;
         if (archerAsset) {
             ctx.drawImage(archerAsset, a.x - 8, a.y - 8, 16, 16);
         } else {
@@ -1383,7 +1395,10 @@ export function renderWorldOverlay() {
     }
 
     const knightAsset = assets['citizen_knight'];
+    let renderedKnights = 0;
     for (const k of knights) {
+        if (!isVisibleUnit(k)) continue;
+        if (renderedKnights++ >= 60) break;
         if (knightAsset) {
             ctx.drawImage(knightAsset, k.x - 8, k.y - 8, 16, 16);
         } else {
@@ -1452,7 +1467,10 @@ export function renderWorldOverlay() {
         }
     }
 
+    let renderedRaiders = 0;
     for (const r of raiders) {
+        if (!isVisibleUnit(r)) continue;
+        if (renderedRaiders++ >= 160) break;
         const raiderAsset = r.type === 'torch' ? assets['enemy_torch_raider']
                           : r.type === 'siege' ? assets['enemy_siege_raider']
                           : assets['enemy_raider'];

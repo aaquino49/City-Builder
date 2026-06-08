@@ -1,0 +1,249 @@
+// Query-gated release-candidate QA harness. Activate with ?qa=1.
+const QA_ENABLED = new URLSearchParams(window.location.search).has('qa');
+
+function waitForGameReady() {
+    return new Promise(resolve => {
+        const tick = () => {
+            if (window.grid && window.gameState && window.Citizen && window.Soldier && window.Raider) resolve();
+            else setTimeout(tick, 50);
+        };
+        tick();
+    });
+}
+
+function setQaResult(payload) {
+    const out = document.getElementById('qa-result');
+    if (out) out.textContent = JSON.stringify(payload, null, 2);
+}
+
+function placeIfFree(tx, ty, def) {
+    if (!window.grid?.inBounds(tx, ty) || !def) return false;
+    const w = def.width || 1;
+    const h = def.height || 1;
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            if (!window.grid.inBounds(tx + x, ty + y) || window.grid.structures[ty + y][tx + x]) return false;
+        }
+    }
+    window.grid.place(tx, ty, def);
+    return true;
+}
+
+function clearRuntimeCollections() {
+    for (const arr of [
+        window.citizens, window.soldiers, window.archers, window.knights,
+        window.raiders, window.activeProjectiles, window.projectiles, window.particles,
+    ]) {
+        if (arr) arr.length = 0;
+    }
+}
+
+function seedLargeCity() {
+    clearRuntimeCollections();
+    const { BUILDINGS, TILE_SIZE } = window;
+    window.gameState.started = true;
+    window.setGameIsPaused(false);
+    window.setUserPaused(false);
+    window.setTimeScale(1);
+    const start = document.getElementById('start-screen');
+    if (start) start.style.display = 'none';
+
+    for (let ty = 0; ty < window.grid.height; ty++) {
+        for (let tx = 0; tx < window.grid.width; tx++) {
+            window.grid.structures[ty][tx] = null;
+            window.grid.tiles[ty][tx] = 'tile_grass';
+        }
+    }
+    for (let tx = 6; tx < 58; tx++) window.grid.tiles[32][tx] = 'tile_road';
+    for (let ty = 6; ty < 58; ty++) window.grid.tiles[ty][32] = 'tile_road';
+
+    for (let i = 0; i < 34; i++) {
+        const tx = 18 + (i % 9) * 3;
+        const ty = 19 + Math.floor(i / 9) * 3;
+        placeIfFree(tx, ty, BUILDINGS.house);
+    }
+    for (let i = 0; i < 24; i++) {
+        const tx = 12 + (i % 8) * 5;
+        const ty = 42 + Math.floor(i / 8) * 3;
+        placeIfFree(tx, ty, BUILDINGS.farm);
+    }
+    for (let i = 0; i < 16; i++) {
+        placeIfFree(14 + i * 2, 15, BUILDINGS.wall);
+        placeIfFree(14 + i * 2, 49, BUILDINGS.wall);
+    }
+    placeIfFree(30, 28, BUILDINGS.barracks);
+    placeIfFree(34, 28, BUILDINGS.archery_range);
+    placeIfFree(30, 36, BUILDINGS.tower);
+    placeIfFree(36, 36, BUILDINGS.ballista_tower);
+    window.rebuildStructureLists();
+    window._buildStaticCache?.();
+
+    const jitter = () => (Math.random() - 0.5) * 520;
+    for (let i = 0; i < 180; i++) window.citizens.push(new window.Citizen(32.5 * TILE_SIZE + jitter(), 32.5 * TILE_SIZE + jitter()));
+    for (let i = 0; i < 100; i++) window.soldiers.push(new window.Soldier(32.5 * TILE_SIZE + jitter() * 0.7, 32.5 * TILE_SIZE + jitter() * 0.7));
+    for (let i = 0; i < 60; i++) window.archers.push(new window.Archer(32.5 * TILE_SIZE + jitter() * 0.6, 32.5 * TILE_SIZE + jitter() * 0.6));
+    for (let i = 0; i < 35; i++) window.knights.push(new window.Knight(32.5 * TILE_SIZE + jitter() * 0.5, 32.5 * TILE_SIZE + jitter() * 0.5));
+    for (let i = 0; i < 140; i++) {
+        const edge = i % 4;
+        const x = edge === 0 ? 2 * TILE_SIZE : edge === 1 ? 62 * TILE_SIZE : (8 + Math.random() * 48) * TILE_SIZE;
+        const y = edge === 2 ? 2 * TILE_SIZE : edge === 3 ? 62 * TILE_SIZE : (8 + Math.random() * 48) * TILE_SIZE;
+        window.raiders.push(new window.Raider(x, y, i % 11 === 0 ? 'siege' : i % 7 === 0 ? 'torch' : 'normal'));
+    }
+    window.gameState.population = window.citizens.length;
+    window.gameState.housing = 220;
+    window.gameState.gold = 5000;
+    window.gameState.food = 600;
+    window.setRaidActive(true);
+    window.setRaidCount(7);
+    window.setRaidStrength(118);
+    window.setCurrentTerritoryRadius(30);
+    window.refreshUI();
+    window.updateRaidHUD();
+    return {
+        citizens: window.citizens.length,
+        soldiers: window.soldiers.length,
+        archers: window.archers.length,
+        knights: window.knights.length,
+        raiders: window.raiders.length,
+        structures: window.activeHouses.length + window.activeFarms.length + window.activeWalls.length,
+    };
+}
+
+function measureFrames(sampleCount = 240) {
+    return new Promise(resolve => {
+        const deltas = [];
+        let last = performance.now();
+        const step = now => {
+            deltas.push(now - last);
+            last = now;
+            if (deltas.length >= sampleCount) {
+                const sorted = deltas.slice().sort((a, b) => a - b);
+                const sum = deltas.reduce((a, b) => a + b, 0);
+                resolve({
+                    frames: deltas.length,
+                    avgMs: +(sum / deltas.length).toFixed(2),
+                    p95Ms: +sorted[Math.floor(sorted.length * 0.95)].toFixed(2),
+                    maxMs: +sorted[sorted.length - 1].toFixed(2),
+                    fpsAvg: +(1000 / (sum / deltas.length)).toFixed(1),
+                });
+            } else {
+                requestAnimationFrame(step);
+            }
+        };
+        requestAnimationFrame(step);
+    });
+}
+
+function testSaveLoad() {
+    const before = {
+        population: window.gameState.population,
+        soldiers: window.soldiers.length,
+        archers: window.archers.length,
+        knights: window.knights.length,
+        raiders: window.raiders.length,
+    };
+    window.saveGame();
+    const bytes = localStorage.getItem(window.SAVE_KEY)?.length || 0;
+    const loaded = window.loadGame();
+    return {
+        loaded,
+        bytes,
+        before,
+        after: {
+            population: window.gameState.population,
+            citizens: window.citizens.length,
+            soldiers: window.soldiers.length,
+            archers: window.archers.length,
+            knights: window.knights.length,
+            raiders: window.raiders.length,
+        },
+    };
+}
+
+function testPathfinding() {
+    const start = performance.now();
+    let found = 0;
+    let blocked = 0;
+    let deferred = 0;
+    window.setRaidPathBudget(1000);
+    for (let i = 0; i < 240; i++) {
+        const sx = 4 + (i % 16);
+        const sy = 4 + ((i * 3) % 16);
+        const ex = 48 + (i % 10);
+        const ey = 48 + ((i * 7) % 10);
+        const path = window.aStarPath(sx, sy, ex, ey, window.isFriendlyWalkable);
+        if (path === false) deferred++;
+        else if (path === null) blocked++;
+        else found++;
+    }
+    return {
+        ms: +(performance.now() - start).toFixed(2),
+        found,
+        blocked,
+        deferred,
+    };
+}
+
+function sampleMovement() {
+    window.setCombatMode('attack');
+    window.updateCombatModeUI?.();
+    window.setRaidPathBudget(1000);
+    for (const c of window.citizens.slice(0, 30)) {
+        if (typeof c._tryAmbientWalk === 'function') c._tryAmbientWalk(window.grid);
+    }
+    for (const s of window.soldiers.slice(0, 25)) {
+        s._idleTimer = s._idleWait || 0;
+        if (typeof s._pickPatrolTarget === 'function') s._pickPatrolTarget(window.grid);
+    }
+    for (const r of window.raiders.slice(0, 25)) {
+        r._repathTimer = 0;
+        if (typeof r._requestPath === 'function') r._requestPath();
+    }
+    const units = [
+        ...window.citizens.slice(0, 25),
+        ...window.soldiers.slice(0, 20),
+        ...window.raiders.slice(0, 20),
+    ].map(u => ({ u, x: u.x, y: u.y }));
+    return new Promise(resolve => {
+        setTimeout(() => {
+            const jumps = units.map(({ u, x, y }) => Math.hypot(u.x - x, u.y - y));
+            resolve({
+                sampled: units.length,
+                maxDeltaPx: +Math.max(...jumps).toFixed(2),
+                avgDeltaPx: +(jumps.reduce((a, b) => a + b, 0) / jumps.length).toFixed(2),
+            });
+        }, 1000);
+    });
+}
+
+async function runFullQa() {
+    const seeded = seedLargeCity();
+    const movement = await sampleMovement();
+    const pathfinding = testPathfinding();
+    const frames = await measureFrames();
+    const saveLoad = testSaveLoad();
+    const result = { seeded, movement, pathfinding, frames, saveLoad };
+    setQaResult(result);
+    return result;
+}
+
+async function bootQaHarness() {
+    await waitForGameReady();
+    const panel = document.createElement('div');
+    panel.id = 'qa-panel';
+    panel.style.cssText = 'position:fixed;left:8px;top:8px;z-index:99999;background:#111;color:#fff;padding:8px;font:12px monospace;max-width:460px;max-height:70vh;overflow:auto;border:1px solid #999;';
+    panel.innerHTML = `
+        <button id="qa-seed" type="button">Seed Stress City</button>
+        <button id="qa-run" type="button">Run Full QA</button>
+        <pre id="qa-result">Ready</pre>
+    `;
+    document.body.appendChild(panel);
+    document.getElementById('qa-seed').addEventListener('click', () => setQaResult({ seeded: seedLargeCity() }));
+    document.getElementById('qa-run').addEventListener('click', () => {
+        setQaResult({ running: true });
+        runFullQa().catch(err => setQaResult({ error: err.message, stack: err.stack }));
+    });
+    window.__pixelDominionQa = { seedLargeCity, runFullQa, testSaveLoad, testPathfinding, measureFrames };
+}
+
+if (QA_ENABLED) bootQaHarness();

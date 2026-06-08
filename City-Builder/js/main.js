@@ -48,6 +48,7 @@ import { _NON_BURNABLE } from './systems/systems.js';
 import { triggerVictory, updateCombatModeUI } from './ui/ui.js';
 import './core/input.js';
 import { runSmokeTests } from './smoke_tests.js';
+import './qa_harness.js';
 
 // Run smoke tests when loaded
 setTimeout(() => {
@@ -510,14 +511,14 @@ function _startFireAtTile(tx, ty) {
     if (incidentManager?.active?.type === 'fire') {
         const alreadyBurning = incidentManager.active.fires.some(f => f.tx === tx && f.ty === ty);
         if (alreadyBurning) return false;
-        if (s.hp === undefined) s.hp = _BUILDING_HP[s.def.key] ?? 100;
+        if (s.hp === undefined) s.hp = getMaxHP(s.def.key);
         incidentManager.active.fires.push({ tx, ty, timer: 0 });
         showEventBanner('FIRE!', `A ${s.def.label ?? s.def.key} has been set ablaze!`);
         return true;
     }
     if (incidentManager?.active) return false;
     if (!incidentManager) return false;
-    if (s.hp === undefined) s.hp = _BUILDING_HP[s.def.key] ?? 100;
+    if (s.hp === undefined) s.hp = getMaxHP(s.def.key);
     incidentManager.active = { type: 'fire', fires: [{ tx, ty, timer: 0 }], spreadTimer: 0, timer: 0, duration: 15 };
     showEventBanner('FIRE!', `A ${s.def.label ?? s.def.key} has been set ablaze!`);
     playFireSFX();

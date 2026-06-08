@@ -1,0 +1,13 @@
+{
+  "name": "pixel-dominion",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check js/main.js && node --check js/core/state.js && node --check js/entities/entities.js && node --check js/core/pathfinding.js && node --check js/ui/ui.js && node --check js/systems/systems.js && node --check js/core/input.js && node --check js/smoke_tests.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
