@@ -184,6 +184,75 @@ function testPathfinding() {
     };
 }
 
+function testRegressionBugs() {
+    const { TILE_SIZE, BUILDINGS } = window;
+    const results = {};
+
+    const maxR = (window.currentTerritoryRadius + 1) * TILE_SIZE;
+    const centerX = 32.5 * TILE_SIZE;
+    const centerY = 32.5 * TILE_SIZE;
+    const outsideX = centerX + maxR + TILE_SIZE * 8;
+    for (const unit of [...window.soldiers.slice(0, 3), ...window.archers.slice(0, 3), ...window.knights.slice(0, 3)]) {
+        unit.x = outsideX;
+        unit.y = centerY;
+    }
+    window.update(16);
+    results.militaryClamped = [...window.soldiers.slice(0, 3), ...window.archers.slice(0, 3), ...window.knights.slice(0, 3)]
+        .every(unit => Math.hypot(unit.x - centerX, unit.y - centerY) <= maxR + 0.01);
+
+    window.raiders.length = 0;
+    window.setRaidActive(false);
+    window.setScoutPhase(false);
+    window.setRaidQueued(false);
+    window.setRaidCount(1);
+    window.setRaidTimer(0.01);
+    window.update(32);
+    results.raidStartsImmediately = window.raidActive === true && window.raiders.length > 0 && window._scoutPhase === false;
+    results.waveBannerShown = document.getElementById('event-banner-title')?.textContent?.includes('RAID WAVE') || false;
+
+    window.raiders.length = 0;
+    window.setRaidActive(false);
+    window.setRaidQueued(true);
+    window.setScoutPhase(false);
+    window.update(16);
+    results.queuedRaidStartsImmediately = window.raidActive === true && window.raiders.length > 0;
+
+    window.raiders.length = 0;
+    window.setRaidActive(false);
+    window.setRaidQueued(false);
+    window.setScoutPhase(true);
+    window.setScoutTimer(30);
+    window.update(16);
+    results.scoutRaidStartsImmediately = window.raidActive === true && window.raiders.length > 0 && window._scoutPhase === false;
+
+    window.setRaidActive(false);
+    window.raiders.length = 0;
+    const tx = 28, ty = 28;
+    placeIfFree(tx, ty, BUILDINGS.monument);
+    const monument = window.grid.structures[ty][tx];
+    if (monument) monument.progress = 0;
+    window.rebuildStructureLists();
+    for (const c of window.citizens.slice(0, 20)) {
+        c.job = 'farmer';
+        c.state = 'idle';
+        c._workTX = window.activeFarms[0]?.tx ?? -1;
+        c._workTY = window.activeFarms[0]?.ty ?? -1;
+    }
+    window.assignCitizenJobs();
+    const builder = window.citizens.find(c => c.job === 'builder' && c._workTX === tx && c._workTY === ty);
+    if (builder) {
+        builder.x = tx * TILE_SIZE + TILE_SIZE / 2;
+        builder.y = ty * TILE_SIZE + TILE_SIZE / 2;
+        builder.state = 'idle';
+        builder._phase = 'building';
+        builder.update(1000, window.grid);
+    }
+    results.monumentGetsBuilder = !!builder;
+    results.monumentProgresses = (window.grid.structures[ty]?.[tx]?.progress ?? 0) > 0;
+
+    return results;
+}
+
 function sampleMovement() {
     window.setCombatMode('attack');
     window.updateCombatModeUI?.();
@@ -220,9 +289,10 @@ async function runFullQa() {
     const seeded = seedLargeCity();
     const movement = await sampleMovement();
     const pathfinding = testPathfinding();
+    const regressions = testRegressionBugs();
     const frames = await measureFrames();
     const saveLoad = testSaveLoad();
-    const result = { seeded, movement, pathfinding, frames, saveLoad };
+    const result = { seeded, movement, pathfinding, regressions, frames, saveLoad };
     setQaResult(result);
     return result;
 }
@@ -243,7 +313,7 @@ async function bootQaHarness() {
         setQaResult({ running: true });
         runFullQa().catch(err => setQaResult({ error: err.message, stack: err.stack }));
     });
-    window.__pixelDominionQa = { seedLargeCity, runFullQa, testSaveLoad, testPathfinding, measureFrames };
+    window.__pixelDominionQa = { seedLargeCity, runFullQa, testSaveLoad, testPathfinding, testRegressionBugs, measureFrames };
 }
 
 if (QA_ENABLED) bootQaHarness();

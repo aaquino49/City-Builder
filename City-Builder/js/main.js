@@ -571,11 +571,18 @@ function startRaidWave() {
     if (waveNum > FINAL_RAID_WAVE) return;
     setRaidActive(true);
     setRaidActiveTimer(0);
+    setRaidTimer(0);
+    setScoutPhase(false);
+    setScoutTimer(0);
+    setRaidQueued(false);
     setRaidBuildingsDestroyed(0);
     setRaidCitizensKilled(0);
     document.getElementById('raid-warning').classList.remove('active');
     sendCitizensToHide();
     const waveSize = getRaidWaveSize(waveNum);
+    showEventBanner(`RAID WAVE ${waveNum}`, `${waveSize} raiders are attacking now!`);
+    playRaidWarningSFX();
+    setRaidWarningPlayed(true);
     const dirs = chooseRaidDirections(waveNum, waveSize);
     for (let i = 0; i < waveSize; i++) {
         const pos = getSpawnPos(dirs[i % dirs.length]);
@@ -946,6 +953,32 @@ function assignCitizenJobs() {
         }
     }
     let qi = 0; // pointer into idleQueue — each idle citizen is assigned at most once
+    const takeBuilder = () => {
+        if (qi < idleQueue.length) return idleQueue[qi++];
+        const worker = citizens.find(c =>
+            c.state !== 'walking' &&
+            (c.job === 'farmer' || c.job === 'woodcutter' || c.job === 'stone_miner' || c.job === 'iron_miner')
+        );
+        if (!worker) return null;
+        const oldKey = `${worker._workTX},${worker._workTY}`;
+        workerCounts[oldKey] = Math.max(0, (workerCounts[oldKey] || 1) - 1);
+        return worker;
+    };
+    for (const { tx, ty } of underConstruction) {
+        const s = grid.structures[ty][tx];
+        if (!s || s.progress === undefined || s.progress >= 1.0) continue;
+        const key = `${tx},${ty}`;
+        if (hasBuilder[key]) continue;
+        const worker = takeBuilder();
+        if (!worker) break;
+        worker.job = 'builder';
+        worker._phase = 'go_work';
+        worker._workTX = tx;
+        worker._workTY = ty;
+        worker._nodeTX = -1;
+        worker._nodeTY = -1;
+        hasBuilder[key] = true;
+    }
 
     // Assign resource-gathering workers to completed workplaces (iterate maintained list,
     // not the full grid). At most one new worker per workplace per call, as before.
@@ -1062,7 +1095,9 @@ function update(dtMs) {
     camera.x = Math.max(0, Math.min(maxCameraX, camera.x));
     camera.y = Math.max(0, Math.min(maxCameraY, camera.y));
 
-    if (!raidActive) {
+    if (!raidActive && (_raidQueued || _scoutPhase)) {
+        startRaidWave();
+    } else if (!raidActive) {
         // Fire queued raid when night arrives
         if (_raidQueued && !_scoutPhase && _getDayPhase(dayTimer) === 'night') {
             setRaidQueued(false);
@@ -1089,9 +1124,11 @@ function update(dtMs) {
                     setScoutTimer(30);
                     showEventBanner('SCOUTS SPOTTED!', 'Raiders approach — close your gates!');
                     playRaidWarningSFX(); setRaidWarningPlayed(true);
+                    startRaidWave();
                 } else {
                     setRaidTimer(0);
                     setRaidQueued(true);
+                    startRaidWave();
                 }
             }
         }

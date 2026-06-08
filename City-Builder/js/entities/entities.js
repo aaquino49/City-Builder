@@ -32,6 +32,26 @@ function _getNearestOpenNeighbor(tx, ty, walkableFn = isFriendlyWalkable) {
 function _getDefendRallyTile() {
     const centerTX = 32;
     const centerTY = 32;
+    if ((activeWalls.length + activeGates.length) > 0) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const { tx, ty } of [...activeWalls, ...activeGates]) {
+            minX = Math.min(minX, tx); minY = Math.min(minY, ty);
+            maxX = Math.max(maxX, tx); maxY = Math.max(maxY, ty);
+        }
+        const bx = Math.round((minX + maxX) / 2);
+        const by = Math.round((minY + maxY) / 2);
+        if (isFriendlyWalkable(bx, by)) return { tx: bx, ty: by };
+        for (let radius = 1; radius <= Math.max(2, Math.max(maxX - minX, maxY - minY)); radius++) {
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    const tx = bx + dx;
+                    const ty = by + dy;
+                    if (tx <= minX || tx >= maxX || ty <= minY || ty >= maxY) continue;
+                    if (_isInTerritory(tx, ty, 1) && isFriendlyWalkable(tx, ty)) return { tx, ty };
+                }
+            }
+        }
+    }
     if (isFriendlyWalkable(centerTX, centerTY)) return { tx: centerTX, ty: centerTY };
     for (let radius = 1; radius <= Math.max(2, currentTerritoryRadius + 1); radius++) {
         for (let dy = -radius; dy <= radius; dy++) {
@@ -44,6 +64,64 @@ function _getDefendRallyTile() {
         }
     }
     return null;
+}
+
+function _findProtectedWallPost(unit, activeRaiders) {
+    const walls = [...activeWalls, ...activeGates];
+    if (walls.length === 0) return null;
+    const ux = Math.floor(unit.x / TILE_SIZE);
+    const uy = Math.floor(unit.y / TILE_SIZE);
+    let nearestRaiderTX = -1;
+    let nearestRaiderTY = -1;
+    let nearestRaider = null;
+    let bestRaiderDist = Infinity;
+    for (const r of activeRaiders) {
+        const rtx = Math.floor(r.x / TILE_SIZE);
+        const rty = Math.floor(r.y / TILE_SIZE);
+        const dx = rtx - ux;
+        const dy = rty - uy;
+        const dSq = dx * dx + dy * dy;
+        if (dSq < bestRaiderDist) {
+            bestRaiderDist = dSq;
+            nearestRaider = r;
+            nearestRaiderTX = rtx;
+            nearestRaiderTY = rty;
+        }
+    }
+    let best = null;
+    let bestScore = Infinity;
+    for (const { tx, ty } of walls) {
+        let wallRaiderDist = 0;
+        if (nearestRaider) {
+            const wdx = tx - nearestRaiderTX;
+            const wdy = ty - nearestRaiderTY;
+            wallRaiderDist = wdx * wdx + wdy * wdy;
+        }
+        for (const { dx, dy } of [{dx:0,dy:-1},{dx:0,dy:1},{dx:-1,dy:0},{dx:1,dy:0}]) {
+            const standTX = tx + dx;
+            const standTY = ty + dy;
+            if (!isFriendlyWalkable(standTX, standTY) || !_isInTerritory(standTX, standTY, 0)) continue;
+            let protectionPenalty = 0;
+            let raiderScore = 0;
+            if (nearestRaider) {
+                const sdx = standTX - nearestRaiderTX;
+                const sdy = standTY - nearestRaiderTY;
+                raiderScore = (tx - nearestRaiderTX) * (tx - nearestRaiderTX) + (ty - nearestRaiderTY) * (ty - nearestRaiderTY);
+                const standRaiderDist = sdx * sdx + sdy * sdy;
+                if (standRaiderDist <= wallRaiderDist) protectionPenalty = 100000;
+            }
+            const selfDX = standTX - ux;
+            const selfDY = standTY - uy;
+            const postKey = tx + ',' + ty;
+            const postCount = _archerDefenseContext.postCounts.get(postKey) || 0;
+            const score = protectionPenalty + raiderScore * 1000 + selfDX * selfDX + selfDY * selfDY + postCount * 50000;
+            if (score < bestScore) {
+                bestScore = score;
+                best = { tx, ty, standTX, standTY };
+            }
+        }
+    }
+    return best;
 }
 
 function _assignUnitPath(unit, path, grid, speed, stateName) {
@@ -700,6 +778,7 @@ export class Soldier {
     }
 
     update(dtSec, grid, activeRaiders) {
+        _clampToTerritory(this);
         if (activeRaiders.length > 0 && _combatMode === 'attack') {
             let closest = null, closestDistSq = Infinity;
             for (const r of activeRaiders) {
@@ -727,6 +806,7 @@ export class Soldier {
                     const spd = TILE_SIZE * 1.5 * dtSec;
                     if (d <= spd) { this.x = wpX; this.y = wpY; this._chaseIndex++; }
                     else { this.x += (wpX - this.x) / d * spd; this.y += (wpY - this.y) / d * spd; }
+                    _clampToTerritory(this);
                 }
             }
             return;
@@ -744,6 +824,7 @@ export class Soldier {
         } else {
             _moveUnitAlongPath(this, dtSec, grid, 1.5);
         }
+        _clampToTerritory(this);
     }
 }
 
@@ -757,6 +838,7 @@ export class Archer {
         this._moveTimer = 0; this.speed = 1.5;
         this.state = 'seeking_post';
         this._postTX = -1; this._postTY = -1;
+        this._postStandTX = -1; this._postStandTY = -1;
         this._fireTimer = 0;
         this._searchTimer = 0;
         this._path = [];
@@ -765,9 +847,11 @@ export class Archer {
     }
 
     update(dtSec, grid, activeRaiders) {
+        _clampToTerritory(this);
         // Mode-sync: switch state when _combatMode changes
         if (_combatMode === 'attack' && (this._postTX !== -1 || this.state === 'seeking_post' || this.state === 'at_post')) {
             this._postTX = -1; this._postTY = -1;
+            this._postStandTX = -1; this._postStandTY = -1;
             this.state = 'following';
             this._path = [];
             this._pathIndex = 0;
@@ -779,8 +863,9 @@ export class Archer {
 
         if (this._postTX !== -1) {
             const s = grid.structures[this._postTY]?.[this._postTX];
-            if (!s || (s.def.key !== 'wall' && s.def.key !== 'tower')) {
+            if (!s || (s.def.key !== 'wall' && s.def.key !== 'tower' && s.def.key !== 'gate')) {
                 this._postTX = -1; this._postTY = -1;
+                this._postStandTX = -1; this._postStandTY = -1;
                 this.state = 'seeking_post';
             }
         }
@@ -820,12 +905,28 @@ export class Archer {
                     fireArrow(this.x, this.y, closest, dmg);
                 }
             }
+            _clampToTerritory(this);
             return;
         }
         if (this.state === 'seeking_post') {
             this._searchTimer += dtSec;
             if (this._searchTimer < 1.0) return;
             this._searchTimer = 0;
+            const protectedPost = _findProtectedWallPost(this, activeRaiders);
+            if (protectedPost) {
+                const { tx: bx, ty: by, standTX, standTY } = protectedPost;
+                this._postTX = bx; this._postTY = by;
+                this._postStandTX = standTX; this._postStandTY = standTY;
+                const aSX = Math.floor(this.x / TILE_SIZE), aSY = Math.floor(this.y / TILE_SIZE);
+                const ap = aStarPath(aSX, aSY, standTX, standTY, isFriendlyWalkable);
+                this._path = (ap && ap.length > 0) ? ap : [];
+                this._pathIndex = 0;
+                this._moveFromX = this.x; this._moveFromY = this.y;
+                this._moveTimer = 0;
+                this.state = 'moving_to_post';
+                _clampToTerritory(this);
+                return;
+            }
             const mTX = Math.floor(this.x / TILE_SIZE);
             const mTY = Math.floor(this.y / TILE_SIZE);
             // Claimed posts → O(1) lookup, built once (replaces per-candidate archers.some()).
@@ -909,6 +1010,7 @@ export class Archer {
                 }
             }
         }
+        _clampToTerritory(this);
     }
 }
 
@@ -934,6 +1036,7 @@ export class Knight {
     }
 
     update(dtSec, grid, activeRaiders) {
+        _clampToTerritory(this);
         if (activeRaiders.length > 0 && _combatMode === 'attack') {
             let closest = null, cdSq = Infinity;
             for (const r of activeRaiders) {
@@ -961,6 +1064,7 @@ export class Knight {
                     const spd = TILE_SIZE * 1.2 * dtSec;
                     if (d <= spd) { this.x = wpX; this.y = wpY; this._chaseIndex++; }
                     else { this.x += (wpX - this.x) / d * spd; this.y += (wpY - this.y) / d * spd; }
+                    _clampToTerritory(this);
                 }
             }
             return;
@@ -1007,6 +1111,7 @@ export class Knight {
         } else {
             _moveUnitAlongPath(this, dtSec, grid, 1.2);
         }
+        _clampToTerritory(this);
     }
 }
 

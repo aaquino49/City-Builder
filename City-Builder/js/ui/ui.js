@@ -251,22 +251,15 @@ export class GameGrid {
         ctx.setLineDash([]);
         ctx.shadowBlur = 0;
 
-        const visibleCitizens = [];
-        for (const c of citizens) {
-            if (c.state === 'walking' || c._visualMoving) visibleCitizens.push(c);
-            if (visibleCitizens.length >= MAX_CITIZEN_RENDER) break;
-        }
-        if (visibleCitizens.length < MAX_CITIZEN_RENDER) {
-            for (const c of citizens) {
-                if (c.state === 'walking' || c._visualMoving) continue;
-                visibleCitizens.push(c);
-                if (visibleCitizens.length >= MAX_CITIZEN_RENDER) break;
-            }
-        }
         const citizenAsset = assets['citizen_sprite'];
-        for (const c of visibleCitizens) {
+        const viewMinX = camX - TILE_SIZE;
+        const viewMinY = camY - TILE_SIZE;
+        const viewMaxX = camX + canvasW / zoom + TILE_SIZE;
+        const viewMaxY = camY + canvasH / zoom + TILE_SIZE;
+        for (const c of citizens) {
             const drawX = typeof c.renderX === 'function' ? c.renderX() : c.x;
             const drawY = typeof c.renderY === 'function' ? c.renderY() : c.y;
+            if (drawX < viewMinX || drawX > viewMaxX || drawY < viewMinY || drawY > viewMaxY) continue;
             if (c.job === 'rebel') {
                 // Red tint for rebels
                 ctx.globalAlpha = 0.85;
