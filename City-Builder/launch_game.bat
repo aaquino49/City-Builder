@@ -1,6 +1,6 @@
 @echo off
 title Pixel Dominion
-cd /d "C:\Users\alexa\OneDrive\Desktop\Claude Projects\City-Builder"
+cd /d "%~dp0"
 echo Starting Pixel Dominion...
 echo Keep this window open while playing.
 echo.
