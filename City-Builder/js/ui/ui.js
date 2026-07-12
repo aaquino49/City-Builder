@@ -963,6 +963,13 @@ export function updateRaidHUD() {
         _hudClass('raid-warning', 'active', true);
         _hudClass('raid-scroll', 'warning', true);
         _hudText('raid-eyebrow', '⚑ SCOUTS SPOTTED ⚑');
+    } else if (window._raidQueued) {
+        // Queued for dusk — live countdown to dusk (dayTimer 42) instead of a
+        // frozen 00:00, so the player can see the raid is still coming.
+        _hudText('res-raid-timer', formatTime(Math.max(0, 42 - (window.dayTimer ?? 0))));
+        _hudClass('raid-warning', 'active', true);
+        _hudClass('raid-scroll', 'warning', true);
+        _hudText('raid-eyebrow', '⚑ RAID AT DUSK ⚑');
     } else {
         _hudText('res-raid-timer', formatTime(raidTimer));
         const isWarn = !gameIsPaused && raidTimer <= 30 && raidTimer > 0;

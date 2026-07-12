@@ -222,7 +222,9 @@ class IncidentManager {
     _updateMerchant(dtSec) {
         if (!merchantNPC) { this._endIncident(); return; }
         if (!gameIsPaused) merchantNPC.update(dtSec);
-        if (merchantNPC.state === 'done') { window.setMerchantNPC(null); this._endIncident(); }
+        // return after ending — _endIncident() nulls this.active, and reading
+        // this.active.timer afterwards threw a TypeError every merchant departure
+        if (merchantNPC.state === 'done') { window.setMerchantNPC(null); this._endIncident(); return; }
         if (this.active.timer >= this.active.duration) { window.setMerchantNPC(null); this._endIncident(); }
     }
 

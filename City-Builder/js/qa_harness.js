@@ -4,7 +4,9 @@ const QA_ENABLED = new URLSearchParams(window.location.search).has('qa');
 function waitForGameReady() {
     return new Promise(resolve => {
         const tick = () => {
-            if (window.grid && window.gameState && window.Citizen && window.Soldier && window.Raider) resolve();
+            // __initDone: init() has fully finished (assets, lists, start screen) —
+            // starting earlier let init re-show the start screen over a running sim
+            if (window.__initDone && window.grid && window.gameState && window.Citizen && window.Soldier && window.Raider) resolve();
             else setTimeout(tick, 50);
         };
         tick();
@@ -322,6 +324,55 @@ function sampleMovement() {
     });
 }
 
+// Simulate real gameplay from the current boot state: step update() in 100ms
+// increments and record every raid-phase transition. Auto-dismisses modals the
+// way a player would, so timers keep running. Catches "raids never fire" bugs
+// that per-state unit checks miss.
+function simulateTimeline(totalSec = 400) {
+    window.gameState.started = true;
+    window.setGameIsPaused(false);
+    window.setUserPaused(false);
+    window.setTimeScale(1);
+    const start = document.getElementById('start-screen');
+    if (start) start.style.display = 'none';
+    const events = [];
+    let lastPhase = '';
+    let raidsSeen = 0;
+    for (let step = 0; step < totalSec * 10; step++) {
+        window.update(100);
+        // Auto-answer any modal that paused the game (raid result, diplomacy, trade)
+        if (window.gameIsPaused) {
+            if (document.getElementById('raid-modal')?.classList.contains('open')) {
+                document.getElementById('modal-continue')?.click();
+            } else if (document.getElementById('diplomacy-modal')?.classList.contains('open')) {
+                document.getElementById('diplomacy-option-b')?.click();
+            } else if (document.getElementById('trade-modal')?.classList.contains('open')) {
+                document.getElementById('trade-close')?.click();
+            } else {
+                window.setGameIsPaused(false); // research/other overlays
+            }
+        }
+        const phase = window.raidActive ? 'raid'
+                    : window._scoutPhase ? 'scout'
+                    : window._raidQueued ? 'queued'
+                    : 'countdown';
+        if (phase !== lastPhase) {
+            if (phase === 'raid') raidsSeen++;
+            events.push({
+                tSec: +(step / 10).toFixed(1),
+                phase,
+                raiders: window.raiders.length,
+                raidTimer: +(window.raidTimer ?? 0).toFixed(1),
+                dayPhase: window._dayPhase,
+                wave: (window.raidCount ?? 0) + 1,
+            });
+            lastPhase = phase;
+        }
+        if (raidsSeen >= 2 && phase === 'countdown') break; // two full raid cycles proven
+    }
+    return { raidsSeen, events };
+}
+
 async function runFullQa() {
     const seeded = seedLargeCity();
     const movement = await sampleMovement();
@@ -359,6 +410,27 @@ if (QA_ENABLED) {
         // ?qa=auto runs the synchronous checks unattended and logs the result —
         // lets a headless browser act as a CI smoke check. (Frame/movement
         // sampling needs real rAF time, so it stays interactive-only.)
+        // ?qa=simload — play past wave 1, save, load, keep playing: proves raids
+        // continue across a save/load boundary (the "resume from autosave" path).
+        if (new URLSearchParams(window.location.search).get('qa') === 'simload') {
+            try {
+                const before = simulateTimeline(250);
+                window.saveGame();
+                const loaded = window.loadGame();
+                const after = simulateTimeline(700);
+                console.log('[QA SIMLOAD] ' + JSON.stringify({ loaded, before, after }));
+            } catch (err) {
+                console.error('[QA ERROR] ' + err.message + '\n' + err.stack);
+            }
+        }
+        if (new URLSearchParams(window.location.search).get('qa') === 'sim') {
+            try {
+                const simSec = Number(new URLSearchParams(window.location.search).get('simSec')) || 400;
+                console.log('[QA SIM] ' + JSON.stringify(simulateTimeline(simSec)));
+            } catch (err) {
+                console.error('[QA ERROR] ' + err.message + '\n' + err.stack);
+            }
+        }
         if (new URLSearchParams(window.location.search).get('qa') === 'auto') {
             try {
                 const seeded = seedLargeCity();

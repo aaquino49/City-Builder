@@ -587,7 +587,8 @@ function startRaidWave() {
     setRaidQueued(false);
     setRaidBuildingsDestroyed(0);
     setRaidCitizensKilled(0);
-    document.getElementById('raid-warning').classList.remove('active');
+    // raid-warning vignette is owned by updateRaidHUD (cached class writes) —
+    // touching classList directly here would desync its cache
     sendCitizensToHide();
     const waveSize = getRaidWaveSize(waveNum);
     showEventBanner(`RAID WAVE ${waveNum}`, `${waveSize} raiders are attacking now!`);
@@ -731,7 +732,6 @@ function updateEffects(dtSec) {
 function resolveRaid() {
     if (!raidActive) return;
     setRaidActive(false);
-    document.getElementById('raid-warning').classList.remove('active');
     // Outcome is decided by what actually happened during the fight, not by a
     // static defense-vs-strength comparison: a raid is repelled when the town
     // kept its buildings and people mostly intact.
@@ -1060,14 +1060,21 @@ function update(dtMs) {
     camera.y = Math.max(0, Math.min(maxCameraY, camera.y));
 
     if (!raidActive) {
-        // A raid queued during the day fires at nightfall, preceded by a 30s
-        // scout warning so the player has time to close gates and hide citizens.
-        if (_raidQueued && !_scoutPhase && _getDayPhase(dayTimer) === 'night') {
-            setRaidQueued(false);
-            setScoutPhase(true);
-            setScoutTimer(30);
-            showEventBanner('SCOUTS SPOTTED!', 'Raiders approach — close your gates!');
-            playRaidWarningSFX(); setRaidWarningPlayed(true);
+        // A raid queued during daylight launches its 30s scout warning at dusk
+        // (dayTimer >= 42), so the wave lands around nightfall. A hard 45s cap
+        // guarantees the queue can never stall silently; the HUD shows a live
+        // countdown to dusk the whole time.
+        if (_raidQueued && !_scoutPhase) {
+            setRaidTimer(raidTimer + dtSec); // elapsed-while-queued safety counter
+            const _qPhase = _getDayPhase(dayTimer);
+            if (_qPhase === 'dusk' || _qPhase === 'night' || raidTimer >= 45) {
+                setRaidQueued(false);
+                setRaidTimer(0);
+                setScoutPhase(true);
+                setScoutTimer(30);
+                showEventBanner('SCOUTS SPOTTED!', 'Raiders approach — close your gates!');
+                playRaidWarningSFX(); setRaidWarningPlayed(true);
+            }
         }
         if (raidCount >= FINAL_RAID_WAVE) {
             setRaidTimer(0);
@@ -1079,9 +1086,10 @@ function update(dtMs) {
         } else if (!_raidQueued) {
             setRaidTimer(raidTimer - dtSec);
             if (raidTimer <= 0) {
+                const _rPhase = _getDayPhase(dayTimer);
                 if (_allianceTimer > 0) {
                     setRaidTimer(RAID_DURATION); // alliance suppresses this raid
-                } else if (raidCount === 0 || _getDayPhase(dayTimer) === 'night') {
+                } else if (raidCount === 0 || _rPhase === 'dusk' || _rPhase === 'night') {
                     setRaidTimer(0);
                     setScoutPhase(true);
                     setScoutTimer(30);
@@ -1089,7 +1097,8 @@ function update(dtMs) {
                     playRaidWarningSFX(); setRaidWarningPlayed(true);
                 } else {
                     setRaidTimer(0);
-                    setRaidQueued(true); // hold until nightfall
+                    setRaidQueued(true); // scouts launch at dusk
+                    showEventBanner('RAIDERS GATHERING', 'They will strike at dusk — prepare your defenses!');
                 }
             }
         }
@@ -1600,6 +1609,7 @@ async function init() {
     render(); // draw world behind start screen
 
     document.getElementById('start-screen').style.display = 'flex';
+    window.__initDone = true; // signals harnesses that boot is fully complete
     requestAnimationFrame(loop);
 }
 
