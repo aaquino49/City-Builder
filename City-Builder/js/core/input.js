@@ -4,6 +4,10 @@
 
 // ===================== KEYBOARD =====================
 window.addEventListener('keydown', e => {
+    // Never intercept typing in form fields (e.g. the leaderboard name input —
+    // previously typing "m"/"n" toggled audio and Space toggled pause)
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     window.keys[e.key.toLowerCase()] = true;
     if (!window.gameState.started) return;
 
@@ -114,6 +118,9 @@ _inputCanvas.addEventListener('contextmenu', e => {
 // whether the game loop is active or paused. Canvas-level wheel listeners can be
 // skipped by browsers when the canvas is in an active requestAnimationFrame loop.
 document.addEventListener('wheel', e => {
+    // Only zoom when the wheel is over the canvas — otherwise let scrollable UI
+    // panels (build menu, research modal, settings drawer) scroll natively.
+    if (e.target !== _inputCanvas) return;
     e.preventDefault();
     if (!window.camera) return;
     const factor = e.deltaY < 0 ? 1.1 : 0.9;

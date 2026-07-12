@@ -87,7 +87,7 @@ export function runSmokeTests() {
         window.grid.structures[5][6] = { def: { key: 'farm' } };
         window.grid.structures[5][4] = { def: { key: 'farm' } };
         const farmAdj = window.getAdjacencyBonus(5, 5, 'farm');
-        assert(`Farm adjacent to 2 other farms should yield +1.0 food (got ${farmAdj})`, farmAdj === 1.0);
+        assert(`Farm adjacent to 2 other farms should yield +3.0 food (got ${farmAdj})`, farmAdj === 3.0);
 
         console.log(`%c[Pixel Dominion] Smoke tests complete. Passed: ${passed}, Failed: ${failed}`, failed > 0 ? 'color: #ff4444; font-weight: bold' : 'color: #88cc44; font-weight: bold');
     } catch (err) {

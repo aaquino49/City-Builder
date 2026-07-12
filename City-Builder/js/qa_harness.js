@@ -160,6 +160,30 @@ function testSaveLoad() {
     };
 }
 
+// Mid-raid save/load: raidActive and the wave tallies must survive the round
+// trip (save v7), defenders must re-engage, and citizens must re-hide.
+function testRaidSaveLoad() {
+    const { TILE_SIZE } = window;
+    window.raiders.length = 0;
+    for (let i = 0; i < 12; i++) {
+        window.raiders.push(new window.Raider((4 + i) * TILE_SIZE, 4 * TILE_SIZE, 'normal'));
+    }
+    window.setRaidActive(true);
+    window.setRaidActiveTimer(42);
+    window.setRaidBuildingsDestroyed(3);
+    window.setRaidCitizensKilled(2);
+    window.saveGame();
+    const loaded = window.loadGame();
+    return {
+        loaded,
+        raidActiveRestored: window.raidActive === true,
+        raidActiveTimerRestored: window.raidActiveTimer === 42,
+        talliesRestored: window.raidBuildingsDestroyed === 3 && window.raidCitizensKilled === 2,
+        raidersRestored: window.raiders.length === 12,
+        citizensHiding: window.citizens.length === 0 || window.citizens.some(c => c.job === 'hiding'),
+    };
+}
+
 function testPathfinding() {
     const start = performance.now();
     let found = 0;
@@ -200,30 +224,43 @@ function testRegressionBugs() {
     results.militaryClamped = [...window.soldiers.slice(0, 3), ...window.archers.slice(0, 3), ...window.knights.slice(0, 3)]
         .every(unit => Math.hypot(unit.x - centerX, unit.y - centerY) <= maxR + 0.01);
 
+    // Raid timing: expiring the timer at night enters a 30s scout warning
+    // (not an instant spawn); the wave spawns when the scout timer runs out.
     window.raiders.length = 0;
     window.setRaidActive(false);
     window.setScoutPhase(false);
     window.setRaidQueued(false);
     window.setRaidCount(1);
+    window.setDayTimer(55); // night
     window.setRaidTimer(0.01);
     window.update(32);
-    results.raidStartsImmediately = window.raidActive === true && window.raiders.length > 0 && window._scoutPhase === false;
+    results.raidWarnsBeforeSpawning = window._scoutPhase === true && window.raidActive === false;
+
+    window.setScoutTimer(0.01);
+    window.update(32);
+    results.scoutExpiryStartsRaid = window.raidActive === true && window.raiders.length > 0 && window._scoutPhase === false;
     results.waveBannerShown = document.getElementById('event-banner-title')?.textContent?.includes('RAID WAVE') || false;
 
+    // Expiring the timer during the day queues the raid for nightfall
     window.raiders.length = 0;
     window.setRaidActive(false);
-    window.setRaidQueued(true);
     window.setScoutPhase(false);
-    window.update(16);
-    results.queuedRaidStartsImmediately = window.raidActive === true && window.raiders.length > 0;
-
-    window.raiders.length = 0;
-    window.setRaidActive(false);
     window.setRaidQueued(false);
-    window.setScoutPhase(true);
-    window.setScoutTimer(30);
-    window.update(16);
-    results.scoutRaidStartsImmediately = window.raidActive === true && window.raiders.length > 0 && window._scoutPhase === false;
+    window.setDayTimer(20); // daytime
+    window.setRaidTimer(0.01);
+    window.update(32);
+    results.daytimeRaidQueues = window._raidQueued === true && window.raidActive === false;
+
+    // The queued raid triggers the scout warning once night falls
+    window.setDayTimer(55); // night
+    window.update(32);
+    results.queuedRaidScoutsAtNight = window._scoutPhase === true && window._raidQueued === false && window.raidActive === false;
+
+    // Reset raid state for the tests below
+    window.raiders.length = 0;
+    window.setScoutPhase(false);
+    window.setRaidQueued(false);
+    window.setRaidTimer(180);
 
     window.setRaidActive(false);
     window.raiders.length = 0;
@@ -292,7 +329,8 @@ async function runFullQa() {
     const regressions = testRegressionBugs();
     const frames = await measureFrames();
     const saveLoad = testSaveLoad();
-    const result = { seeded, movement, pathfinding, regressions, frames, saveLoad };
+    const raidSaveLoad = testRaidSaveLoad();
+    const result = { seeded, movement, pathfinding, regressions, frames, saveLoad, raidSaveLoad };
     setQaResult(result);
     return result;
 }
@@ -313,7 +351,27 @@ async function bootQaHarness() {
         setQaResult({ running: true });
         runFullQa().catch(err => setQaResult({ error: err.message, stack: err.stack }));
     });
-    window.__pixelDominionQa = { seedLargeCity, runFullQa, testSaveLoad, testPathfinding, testRegressionBugs, measureFrames };
+    window.__pixelDominionQa = { seedLargeCity, runFullQa, testSaveLoad, testRaidSaveLoad, testPathfinding, testRegressionBugs, measureFrames };
 }
 
-if (QA_ENABLED) bootQaHarness();
+if (QA_ENABLED) {
+    bootQaHarness().then(() => {
+        // ?qa=auto runs the synchronous checks unattended and logs the result —
+        // lets a headless browser act as a CI smoke check. (Frame/movement
+        // sampling needs real rAF time, so it stays interactive-only.)
+        if (new URLSearchParams(window.location.search).get('qa') === 'auto') {
+            try {
+                const seeded = seedLargeCity();
+                const regressions = testRegressionBugs();
+                const pathfinding = testPathfinding();
+                const saveLoad = testSaveLoad();
+                const raidSaveLoad = testRaidSaveLoad();
+                const result = { seeded, regressions, pathfinding, saveLoad, raidSaveLoad };
+                setQaResult(result);
+                console.log('[QA RESULT] ' + JSON.stringify(result));
+            } catch (err) {
+                console.error('[QA ERROR] ' + err.message + '\n' + err.stack);
+            }
+        }
+    });
+}

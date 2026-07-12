@@ -2,10 +2,13 @@
 
 import {
     applyDifficultyConfig,
+    calcTerritoryRadius,
     currentTerritoryRadius,
     DEFAULT_DIFFICULTY_KEY,
+    FINAL_RAID_WAVE,
     flushUI,
     markUIDirty,
+    RAID_WAVE_SIZES,
     getDifficultyPreset,
     getRaidStrengthForWave,
     getRootStructureAt,
@@ -45,15 +48,25 @@ import './core/utils.js';
 import { setRaidPathBudget } from './core/pathfinding.js';
 import './entities/entities.js';
 import { _NON_BURNABLE } from './systems/systems.js';
-import { triggerVictory, updateCombatModeUI } from './ui/ui.js';
+import { patchStaticCache, showModal, triggerVictory, updateCombatModeUI, updateRaidHUD, _buildStaticCache } from './ui/ui.js';
 import './core/input.js';
 import { runSmokeTests } from './smoke_tests.js';
 import './qa_harness.js';
 
-// Run smoke tests when loaded
-setTimeout(() => {
-    runSmokeTests();
-}, 500);
+// Debug tooling (FPS counter, smoke tests) is opt-in via ?debug
+const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
+window.DEBUG_MODE = DEBUG_MODE;
+if (!DEBUG_MODE) {
+    const _statsCounter = document.getElementById('stats-counter');
+    if (_statsCounter) _statsCounter.style.display = 'none';
+}
+
+// Run smoke tests when loaded (debug builds only)
+if (DEBUG_MODE) {
+    setTimeout(() => {
+        runSmokeTests();
+    }, 500);
+}
 
 let lastTime = 0;
 let _lastLoopErrorTime = 0;
@@ -65,8 +78,7 @@ let _lastCitizenUpdateErrorTime = 0;
 
 // ===================== GAMEPLAY MECHANICS =====================
 const NON_DEMOLISHABLE_KEYS = new Set(['obstacle_tree', 'rubble', 'stone_deposit', 'iron_vein']);
-const RAID_WAVE_SIZES = Object.freeze([3, 6, 15, 25, 35, 60, 80, 120, 160, 200]);
-const FINAL_RAID_WAVE = RAID_WAVE_SIZES.length;
+// RAID_WAVE_SIZES / FINAL_RAID_WAVE now live in state.js (shared with the HUD)
 
 function createRubble() {
     return { def: RUBBLE_DEF, decayTimer: DAY_DURATION };
@@ -104,6 +116,8 @@ function demolishPlayerStructure(tx, ty) {
 
     const px = root.tx;
     const py = root.ty;
+    const dw = s.def.width || 1;
+    const dh = s.def.height || 1;
     gameState.gold += Math.floor(getScaledCost(s.def.key) * 0.5);
     if (s.def.key === 'house') gameState.housesBuilt = Math.max(0, (gameState.housesBuilt || 0) - 1);
     else if (s.def.key === 'farm') gameState.farmsBuilt = Math.max(0, (gameState.farmsBuilt || 0) - 1);
@@ -112,6 +126,7 @@ function demolishPlayerStructure(tx, ty) {
     grid.demolish(px, py);
     grid.structures[py][px] = createRubble();
     playDemolishSFX();
+    patchStaticCache(px, py, dw, dh);
     rebuildStructureLists();
     refreshUI();
     return true;
@@ -129,7 +144,7 @@ function handleGridClick(clientX, clientY) {
     const { tx, ty } = grid.screenToGrid(clientX, clientY);
     if (!grid.inBounds(tx, ty)) return;
 
-    const R = 3 + Math.floor((citizens.length + soldiers.length) / 4);
+    const R = calcTerritoryRadius();
     const isOutside = Math.hypot(tx - 32, ty - 32) > R;
     if (isOutside && gameState.selectedTool && gameState.selectedTool !== 'demolish') {
         playErrorSFX();
@@ -144,6 +159,7 @@ function handleGridClick(clientX, clientY) {
             gameState.gold -= 10;
             grid.demolish(tx, ty);
             playChopSFX();
+            patchStaticCache(tx, ty);
             rebuildStructureLists();
             refreshUI();
         }
@@ -158,6 +174,7 @@ function handleGridClick(clientX, clientY) {
             grid.structures[ty][tx] = null;
             playRubbleSFX();
             spawnParticle(tx * TILE_SIZE + TILE_SIZE / 2, ty * TILE_SIZE + TILE_SIZE / 2, 'puff', 0.4);
+            patchStaticCache(tx, ty);
             rebuildStructureLists();
             refreshUI();
         }
@@ -171,6 +188,7 @@ function handleGridClick(clientX, clientY) {
         gameState.gold -= ROAD_COST;
         grid.tiles[ty][tx] = 'tile_road';
         playRoadSFX();
+        patchStaticCache(tx, ty);
         refreshUI();
         return;
     }
@@ -181,6 +199,7 @@ function handleGridClick(clientX, clientY) {
             gameState.gold += 2; // 50% refund of 5g cost
             grid.tiles[ty][tx] = 'tile_grass';
             playDemolishSFX();
+            patchStaticCache(tx, ty);
             refreshUI();
             return;
         }
@@ -247,19 +266,16 @@ function handleGridClick(clientX, clientY) {
     if (def.key === 'house') gameState.housesBuilt++;
     else if (def.key === 'farm') gameState.farmsBuilt++;
     playBuildSFX();
+    patchStaticCache(tx, ty, w, h);
     rebuildStructureLists();
     refreshUI();
 }
 
 // --- Citizen spawning ---
 function spawnCitizen() {
-    const houses = [];
-    for (let ty = 0; ty < grid.height; ty++)
-        for (let tx = 0; tx < grid.width; tx++)
-            if (grid.structures[ty][tx]?.def.key === 'house') houses.push({ tx, ty });
     let sx, sy;
-    if (houses.length > 0) {
-        const h = houses[Math.floor(Math.random() * houses.length)];
+    if (activeHouses.length > 0) {
+        const h = activeHouses[Math.floor(Math.random() * activeHouses.length)];
         sx = h.tx * TILE_SIZE + TILE_SIZE / 2;
         sy = h.ty * TILE_SIZE + TILE_SIZE / 2;
     } else {
@@ -279,16 +295,12 @@ function trainSoldier() {
     if (gameState.gold < cost) return;
     const idleIdx = citizens.findIndex(c => c.job === 'idle' && c.state !== 'walking');
     if (idleIdx === -1) return;
-    const barracksPos = [];
-    for (let ty = 0; ty < grid.height; ty++)
-        for (let tx = 0; tx < grid.width; tx++)
-            if (grid.structures[ty][tx]?.def.key === 'barracks') barracksPos.push({ tx, ty });
-    if (barracksPos.length === 0) return;
+    if (activeBarracks.length === 0) return;
     gameState.gold -= cost;
     citizens[idleIdx]._alive = false;
     citizens.splice(idleIdx, 1);
     gameState.population = Math.max(0, gameState.population - 1);
-    const b = barracksPos[Math.floor(Math.random() * barracksPos.length)];
+    const b = activeBarracks[Math.floor(Math.random() * activeBarracks.length)];
     const sol = new Soldier(b.tx * TILE_SIZE + TILE_SIZE / 2, b.ty * TILE_SIZE + TILE_SIZE / 2);
     let solHp = UNIT_BALANCE.soldier.baseHp;
     if (gameState.upgrades?.iron_discipline) solHp += UNIT_BALANCE.soldier.ironDisciplineHpBonus;
@@ -334,16 +346,12 @@ function trainArcher() {
     if (gameState.gold < UNIT_BALANCE.archer.goldCost) return;
     const idleIdx = citizens.findIndex(c => c.job === 'idle' && c.state !== 'walking');
     if (idleIdx === -1) return;
-    const archeryPos = [];
-    for (let ty = 0; ty < grid.height; ty++)
-        for (let tx = 0; tx < grid.width; tx++)
-            if (grid.structures[ty][tx]?.def.key === 'archery_range') archeryPos.push({ tx, ty });
-    if (archeryPos.length === 0) return;
+    if (activeArcheryRanges.length === 0) return;
     gameState.gold -= UNIT_BALANCE.archer.goldCost;
     citizens[idleIdx]._alive = false;
     citizens.splice(idleIdx, 1);
     gameState.population = Math.max(0, gameState.population - 1);
-    const b = archeryPos[Math.floor(Math.random() * archeryPos.length)];
+    const b = activeArcheryRanges[Math.floor(Math.random() * activeArcheryRanges.length)];
     archers.push(new Archer(b.tx * TILE_SIZE + TILE_SIZE / 2, b.ty * TILE_SIZE + TILE_SIZE / 2));
     playTrainSFX();
     // Proxy marks UI dirty; flushUI() will sync on next frame
@@ -366,17 +374,13 @@ function trainKnight() {
     if (gameState.gold < UNIT_BALANCE.knight.goldCost || gameState.iron < UNIT_BALANCE.knight.ironCost) return;
     const idleIdx = citizens.findIndex(c => c.job === 'idle' && c.state !== 'walking');
     if (idleIdx === -1) return;
-    const barracksPos = [];
-    for (let ty = 0; ty < grid.height; ty++)
-        for (let tx = 0; tx < grid.width; tx++)
-            if (grid.structures[ty][tx]?.def.key === 'barracks') barracksPos.push({ tx, ty });
-    if (barracksPos.length === 0) return;
+    if (activeBarracks.length === 0) return;
     gameState.gold -= UNIT_BALANCE.knight.goldCost;
     gameState.iron -= UNIT_BALANCE.knight.ironCost;
     citizens[idleIdx]._alive = false;
     citizens.splice(idleIdx, 1);
     gameState.population = Math.max(0, gameState.population - 1);
-    const b = barracksPos[Math.floor(Math.random() * barracksPos.length)];
+    const b = activeBarracks[Math.floor(Math.random() * activeBarracks.length)];
     knights.push(new Knight(b.tx * TILE_SIZE + TILE_SIZE / 2, b.ty * TILE_SIZE + TILE_SIZE / 2));
     playTrainSFX();
     // Proxy marks UI dirty; flushUI() will sync on next frame
@@ -439,6 +443,7 @@ function updateGates(dtSec, activeRaiders) {
                         grid.structures[ty][tx] = createRubble();
                         spawnParticle(gx, gy, 'puff', 0.4);
                         triggerShake(8);
+                        patchStaticCache(tx, ty);
                         rebuildStructureLists();
                         markUIDirty();
                     }
@@ -566,9 +571,14 @@ function sendCitizensToHide() {
     }
 }
 
+let _raidersDefeatedAtWaveStart = 0;
+// Allows loadGame() to re-baseline the per-wave kill counter after a mid-raid load
+window._setRaidersDefeatedAtWaveStart = v => { _raidersDefeatedAtWaveStart = v; };
+
 function startRaidWave() {
     const waveNum = raidCount + 1;
     if (waveNum > FINAL_RAID_WAVE) return;
+    _raidersDefeatedAtWaveStart = gameState.raidersDefeated || 0;
     setRaidActive(true);
     setRaidActiveTimer(0);
     setRaidTimer(0);
@@ -716,70 +726,20 @@ function updateEffects(dtSec) {
 }
 
 // --- Raid ---
-function updateRaidHUD() {
-    const timerEl = document.getElementById('res-raid-timer');
-    const warnEl  = document.getElementById('raid-warning');
-    const scroll  = document.getElementById('raid-scroll');
-    const eyebrow = document.getElementById('raid-eyebrow');
-    const waveEl  = document.getElementById('raid-wave-indicator');
-    const waveNum = Math.min(raidCount + 1, FINAL_RAID_WAVE);
-    if (waveEl) waveEl.textContent = `WAVE ${waveNum}/${FINAL_RAID_WAVE}${waveNum === FINAL_RAID_WAVE ? ' FINAL' : ''}`;
-    if (raidActive) {
-        if (timerEl) timerEl.textContent = formatTime(raidActiveTimer);
-        if (eyebrow) eyebrow.textContent = '⚔ RAID ⚔';
-        if (warnEl)  warnEl.classList.add('active');
-        if (scroll)  scroll.classList.add('warning');
-    } else if (_scoutPhase) {
-        if (timerEl) timerEl.textContent = formatTime(_scoutTimer);
-        if (warnEl)  warnEl.classList.add('active');
-        if (scroll)  scroll.classList.add('warning');
-        if (eyebrow) eyebrow.textContent = '⚑ SCOUTS SPOTTED ⚑';
-    } else {
-        if (timerEl) timerEl.textContent = formatTime(raidTimer);
-        const isWarn = !gameIsPaused && raidTimer <= 30 && raidTimer > 0;
-        if (warnEl)  warnEl.classList.toggle('active', isWarn);
-        if (scroll)  scroll.classList.toggle('warning', isWarn);
-        if (eyebrow) eyebrow.textContent = isWarn ? '⚔ RAID APPROACHES ⚔' : 'NEXT RAID';
-        if (isWarn) {
-            if (!raidWarningPlayed) { setRaidWarningPlayed(true); playRaidWarningSFX(); }
-        } else {
-            if (raidTimer > 30 || raidTimer <= 0) setRaidWarningPlayed(false);
-        }
-    }
-}
-
-function showModal(isVictory, lines) {
-    setGameIsPaused(true);
-    const sealEl     = document.getElementById('raid-seal');
-    const titleEl    = document.getElementById('modal-title');
-    const subtitleEl = document.getElementById('raid-subtitle');
-    const bodyEl     = document.getElementById('modal-body');
-    if (sealEl) {
-        sealEl.textContent = isVictory ? '✚' : '✗';
-        sealEl.className = 'raid-wax-seal ' + (isVictory ? 'victory' : 'defeat');
-    }
-    if (titleEl) {
-        titleEl.textContent = isVictory ? 'VICTORY' : 'DEFEAT';
-        titleEl.className = 'raid-modal-title ' + (isVictory ? 'victory' : 'defeat');
-    }
-    if (subtitleEl) {
-        subtitleEl.textContent = isVictory
-            ? 'Your walls held strong against the raiders.'
-            : 'The gate has fallen. Rebuild what you can.';
-    }
-    if (bodyEl) bodyEl.innerHTML = lines.map(l => `<div class="modal-body-line">${l}</div>`).join('');
-    document.getElementById('raid-modal').classList.add('open');
-    stopRaidWarningSFX();
-    playRaidResultSFX(isVictory);
-}
+// updateRaidHUD and showModal are imported from ui.js (single source of truth).
 
 function resolveRaid() {
     if (!raidActive) return;
     setRaidActive(false);
     document.getElementById('raid-warning').classList.remove('active');
-    const defense = calcDefense();
-    const isVictory = defense >= raidStrength;
+    // Outcome is decided by what actually happened during the fight, not by a
+    // static defense-vs-strength comparison: a raid is repelled when the town
+    // kept its buildings and people mostly intact.
     const waveNum = raidCount + 1;
+    const waveSize = getRaidWaveSize(waveNum);
+    const killsThisWave = Math.max(0, (gameState.raidersDefeated || 0) - _raidersDefeatedAtWaveStart);
+    const isVictory = raidBuildingsDestroyed <= Math.max(1, Math.floor(waveSize * 0.1))
+                   && raidCitizensKilled   <= Math.max(1, Math.floor(waveSize * 0.15));
     for (const r of raiders) {
         if (r.state !== 'walking') continue;
         if (isVictory) {
@@ -792,7 +752,9 @@ function resolveRaid() {
         }
     }
     if (isVictory) {
-        gameState.gold += 100;
+        // Reward scales with the wave and how many raiders were actually slain
+        const reward = 50 + waveNum * 40 + killsThisWave * 2;
+        gameState.gold += reward;
         if (waveNum >= FINAL_RAID_WAVE) {
             setRaidCount(FINAL_RAID_WAVE);
             stopRaidWarningSFX();
@@ -801,15 +763,17 @@ function resolveRaid() {
         }
         showModal(true, [
             `Wave ${waveNum} repelled!`,
+            `Raiders slain: ${killsThisWave}`,
             `Buildings lost: ${raidBuildingsDestroyed}`,
             `Citizens slain: ${raidCitizensKilled}`,
-            `+100 Gold rewarded`,
+            `+${reward} Gold rewarded`,
         ]);
     } else {
         const goldLost = Math.floor(gameState.gold * 0.2);
         gameState.gold = Math.max(0, gameState.gold - goldLost);
         const lines = [
             `Wave ${waveNum} broke through!`,
+            `Raiders slain: ${killsThisWave}`,
             `Buildings destroyed: ${raidBuildingsDestroyed}`,
             `Citizens slain: ${raidCitizensKilled}`,
         ];
@@ -1053,16 +1017,16 @@ function updateCitizensSafely(dtMs, timestamp = performance.now()) {
 }
 
 function updateRubbleDecay(dtSec) {
+    // Iterates the maintained rubble list instead of sweeping all 4096 tiles per frame.
     let changed = false;
-    for (let ty = 0; ty < grid.height; ty++) {
-        for (let tx = 0; tx < grid.width; tx++) {
-            const s = grid.structures[ty][tx];
-            if (!s || s.def.key !== 'rubble') continue;
-            s.decayTimer = (s.decayTimer ?? DAY_DURATION) - dtSec;
-            if (s.decayTimer <= 0) {
-                grid.structures[ty][tx] = null;
-                changed = true;
-            }
+    for (const { tx, ty } of activeRubble) {
+        const s = grid.structures[ty][tx];
+        if (!s || s.def.key !== 'rubble') continue;
+        s.decayTimer = (s.decayTimer ?? DAY_DURATION) - dtSec;
+        if (s.decayTimer <= 0) {
+            grid.structures[ty][tx] = null;
+            patchStaticCache(tx, ty);
+            changed = true;
         }
     }
     if (changed) {
@@ -1095,10 +1059,9 @@ function update(dtMs) {
     camera.x = Math.max(0, Math.min(maxCameraX, camera.x));
     camera.y = Math.max(0, Math.min(maxCameraY, camera.y));
 
-    if (!raidActive && (_raidQueued || _scoutPhase)) {
-        startRaidWave();
-    } else if (!raidActive) {
-        // Fire queued raid when night arrives
+    if (!raidActive) {
+        // A raid queued during the day fires at nightfall, preceded by a 30s
+        // scout warning so the player has time to close gates and hide citizens.
         if (_raidQueued && !_scoutPhase && _getDayPhase(dayTimer) === 'night') {
             setRaidQueued(false);
             setScoutPhase(true);
@@ -1113,7 +1076,7 @@ function update(dtMs) {
         } else if (_scoutPhase) {
             setScoutTimer(_scoutTimer - dtSec);
             if (_scoutTimer <= 0) { setScoutPhase(false); startRaidWave(); }
-        } else {
+        } else if (!_raidQueued) {
             setRaidTimer(raidTimer - dtSec);
             if (raidTimer <= 0) {
                 if (_allianceTimer > 0) {
@@ -1124,11 +1087,9 @@ function update(dtMs) {
                     setScoutTimer(30);
                     showEventBanner('SCOUTS SPOTTED!', 'Raiders approach — close your gates!');
                     playRaidWarningSFX(); setRaidWarningPlayed(true);
-                    startRaidWave();
                 } else {
                     setRaidTimer(0);
-                    setRaidQueued(true);
-                    startRaidWave();
+                    setRaidQueued(true); // hold until nightfall
                 }
             }
         }
@@ -1304,7 +1265,7 @@ function update(dtMs) {
     _statsUpdateTimer += dtSec;
     if (statsOverlayVisible && _statsUpdateTimer >= 0.5) { _statsUpdateTimer = 0; updateStatsOverlay(); }
 
-    const newRadius = 3 + Math.floor((citizens.length + soldiers.length) / 4);
+    const newRadius = calcTerritoryRadius();
     if (newRadius > currentTerritoryRadius) {
         setCurrentTerritoryRadius(newRadius);
         playExpansionSFX();
@@ -1354,7 +1315,7 @@ function loop(timestamp) {
     const dt = lastTime ? Math.min(timestamp - lastTime, 100) : 0;
     lastTime = timestamp;
     try {
-        if (gameState.started) {
+        if (gameState.started && DEBUG_MODE) {
             frameCount++; fpsTimer += dt;
             if (fpsTimer >= 500) {
                 fps = Math.round(frameCount / (fpsTimer / 1000));
@@ -1625,9 +1586,10 @@ async function init() {
     camera.x = Math.max(0, (grid.width  * TILE_SIZE) / 2 - canvas.width  / 2);
     camera.y = Math.max(0, (grid.height * TILE_SIZE) / 2 - canvas.height / 2);
 
-    setCurrentTerritoryRadius(3 + Math.floor((citizens.length + soldiers.length) / 4));
+    setCurrentTerritoryRadius(calcTerritoryRadius());
 
     rebuildStructureLists();
+    _buildStaticCache();
     renderBuildMenu('all');
     updateCombatModeUI();
     updateDaySeason();

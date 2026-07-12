@@ -186,6 +186,7 @@ class IncidentManager {
                 p.x = fx; p.y = fy; p.type = 'puff'; p.timer = 0; p.duration = 0.5; p.alpha = 1.0;
                 particles.push(p);
                 triggerShake(5);
+                window.patchStaticCache?.(parentTX, parentTY, w, h);
                 rebuildStructureLists();
                 a.fires.splice(fi, 1);
             }
@@ -256,8 +257,10 @@ class IncidentManager {
 
 // ===================== DIPLOMACY =====================
 export const _DIPLOMACY_ACTION_MAP = {
-    'raid': () => { raidTimer = 0; },
-    'raid_strong': () => { raidTimer = 0; raidStrength = Math.ceil(raidStrength * 1.5); },
+    // Use the state.js setters — bare assignment only updated the window copy,
+    // so an autosave taken afterwards persisted stale values.
+    'raid': () => { window.setRaidTimer(0); },
+    'raid_strong': () => { window.setRaidTimer(0); window.setRaidStrength(Math.ceil(raidStrength * 1.5)); },
     'return_soldiers_10': () => {
         const cx = 32.5 * TILE_SIZE, cy = 32.5 * TILE_SIZE;
         for (let i = 0; i < 10; i++) soldiers.push(new Soldier(cx + (Math.random() - 0.5) * TILE_SIZE, cy + (Math.random() - 0.5) * TILE_SIZE));
@@ -320,14 +323,18 @@ const _DIPLOMACY_POOL = [
                 // Proxy marks UI dirty on gold/population writes; flushUI() syncs next frame
             }
         },
-        optionB: { label: 'Refuse',           cost: 'No effect', apply: () => {} },
+        optionB: { label: 'Refuse',           cost: '−5 Happiness',
+            apply: () => { gameState.happiness = Math.max(0, gameState.happiness - 5); } },
     },
     {
         id: 'safe_passage',
         description: 'Travelling merchants request safe passage through your territory.',
         guard: () => true,
-        optionA: { label: 'Grant Passage',    cost: '+80 Gold',
-            apply: () => { gameState.gold += 80; } },
+        optionA: { label: 'Grant Passage',    cost: '+80 Gold  −5 Happiness',
+            apply: () => {
+                gameState.gold += 80;
+                gameState.happiness = Math.max(0, gameState.happiness - 5);
+            } },
         optionB: { label: 'Deny',             cost: 'Raid in 2 days',
             apply: () => scheduleDiplomacyAction('raid', 2) },
     },
@@ -336,7 +343,7 @@ const _DIPLOMACY_POOL = [
         description: 'A rival city proposes a mutual non-aggression alliance.',
         guard: () => true,
         optionA: { label: 'Accept Alliance',  cost: 'Raids suppressed 1 season',
-            apply: () => { _allianceTimer = SEASON_DURATION; } },
+            apply: () => { window.setAllianceTimer(SEASON_DURATION); } },
         optionB: { label: 'Reject',           cost: 'Raid in 2 days',
             apply: () => scheduleDiplomacyAction('raid', 2) },
     },
@@ -403,7 +410,7 @@ const _DIPLOMACY_POOL = [
         optionA: { label: 'Send Iron',        cost: '−20 Iron  +120 Gold',
             apply: () => { gameState.iron = Math.max(0, gameState.iron - 20); gameState.gold += 120; } },
         optionB: { label: 'Decline',          cost: 'Soldier cost +50% for 3 days',
-            apply: () => { _soldierCostMult = 1.5; _soldierCostTimer = 3 * DAY_DURATION; } },
+            apply: () => { window.setSoldierCostMult(1.5); window.setSoldierCostTimer(3 * DAY_DURATION); } },
     },
     {
         id: 'wandering_bard',
@@ -436,8 +443,8 @@ const _DIPLOMACY_POOL = [
         guard: () => gameState.wood >= 50,
         optionA: { label: 'Prepare Defences', cost: '−50 Wood  Food protected',
             apply: () => { gameState.wood = Math.max(0, gameState.wood - 50); } },
-        optionB: { label: 'Ignore Warning',   cost: '−60 Food',
-            apply: () => { gameState.food = Math.max(0, gameState.food - 60); } },
+        optionB: { label: 'Ignore Warning',   cost: '−30% stored Food',
+            apply: () => { gameState.food = Math.floor(gameState.food * 0.7); } },
     },
     {
         id: 'royal_decree',
@@ -982,6 +989,7 @@ function updateCameraShake() {
 function spawnFloat(x, y, text, color, duration) {
     const p = getPooledParticle();
     p.x = x; p.y = y; p.type = 'floating_text'; p.text = text; p.color = color; p.timer = 0; p.duration = duration ?? 1.0; p.alpha = 1.0;
+    p.driftX = (Math.random() - 0.5) * 12; // spread stacked numbers apart
     particles.push(p);
 }
 

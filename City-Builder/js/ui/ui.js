@@ -199,7 +199,16 @@ export class GameGrid {
                     ctx.fillStyle = s.def.color;
                     ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
                 }
-                
+
+                // Padlock cue so manually locked gates are visually distinct
+                if (key === 'gate' && s.manuallyLocked) {
+                    ctx.save();
+                    ctx.font = `${10}px monospace`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🔒', tx * TILE_SIZE + TILE_SIZE / 2, ty * TILE_SIZE + 2);
+                    ctx.restore();
+                }
+
                 if (prog < 1.0) {
                     ctx.fillStyle = 'rgba(0,0,0,0.55)';
                     ctx.fillRect(tx * TILE_SIZE + 2, ty * TILE_SIZE + renderH - 6, renderW - 4, 4);
@@ -216,7 +225,8 @@ export class GameGrid {
                     }
                 } else {
                     if (key === 'academy' && gameState.activeResearch) {
-                        const progressPct = (15.0 - gameState.activeResearch.timer) / 15.0;
+                        const researchDur = gameState.activeResearch.duration ?? 15.0;
+                        const progressPct = (researchDur - gameState.activeResearch.timer) / researchDur;
                         ctx.fillStyle = 'rgba(0,0,0,0.6)';
                         ctx.fillRect(tx * TILE_SIZE + 2, ty * TILE_SIZE - 8, renderW - 4, 4);
                         ctx.fillStyle = '#ffb300';
@@ -230,7 +240,7 @@ export class GameGrid {
         // single even-odd fill (outer viewport rect + inner circle hole) instead of testing
         // and filling each visible tile. Cutout is centered/radiused to match the golden
         // boundary circle drawn below.
-        const R = 3 + Math.floor((citizens.length + soldiers.length) / 4);
+        const R = window.calcTerritoryRadius ? window.calcTerritoryRadius() : 3;
         const _shadeX = camX - TILE_SIZE, _shadeY = camY - TILE_SIZE;
         const _shadeW = canvasW / zoom + TILE_SIZE * 2, _shadeH = canvasH / zoom + TILE_SIZE * 2;
         ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
@@ -292,7 +302,17 @@ export class GameGrid {
                     const h = def.height || 1;
                     const renderW = w * TILE_SIZE;
                     const renderH = h * TILE_SIZE;
-                    ctx.globalAlpha = 0.5;
+                    // Validity-aware ghost: green wash when placeable, red with a reason when not
+                    const placeable = this.canPlace(tx, ty, w, h);
+                    const affordable = selectedTool === 'road'
+                        ? gameState.gold >= ROAD_COST
+                        : gameState.gold >= getScaledCost(selectedTool)
+                            && gameState.wood >= (def.woodCost || 0)
+                            && gameState.iron >= (def.ironCost || 0)
+                            && gameState.stone >= (def.stoneCost || 0);
+                    const inTerritory = Math.hypot(tx - 32, ty - 32) <= R;
+                    const ok = placeable && affordable && inTerritory;
+                    ctx.globalAlpha = 0.55;
                     const asset = assets[def.assetKey];
                     if (asset) {
                         ctx.drawImage(asset, tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
@@ -300,7 +320,23 @@ export class GameGrid {
                         ctx.fillStyle = def.color;
                         ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
                     }
+                    ctx.fillStyle = ok ? 'rgba(80, 220, 100, 0.28)' : 'rgba(220, 60, 40, 0.38)';
+                    ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
                     ctx.globalAlpha = 1.0;
+                    if (!ok) {
+                        const reason = !inTerritory ? 'Outside territory' : !placeable ? 'Blocked' : 'Cannot afford';
+                        ctx.save();
+                        ctx.font = `bold ${11 / zoom}px monospace`;
+                        ctx.textAlign = 'center';
+                        ctx.lineWidth = 3 / zoom;
+                        ctx.strokeStyle = '#000';
+                        ctx.fillStyle = '#ff8877';
+                        const lx = (tx + w / 2) * TILE_SIZE;
+                        const ly = (ty + h) * TILE_SIZE + 12 / zoom;
+                        ctx.strokeText(reason, lx, ly);
+                        ctx.fillText(reason, lx, ly);
+                        ctx.restore();
+                    }
                 }
             }
         }
@@ -363,98 +399,43 @@ function closeResearchModal() {
     window.setGameIsPaused(false);
     document.getElementById('research-modal').classList.remove('open');
 }
+// Single source of truth for research entries: name, description, costs, and
+// prerequisites (previously duplicated between UPGRADES_INFO and UPGRADES_COSTS).
+// `requires` = number of completed researches needed before this one unlocks.
+const RESEARCH_DEFS = [
+    { key: 'reinforced_masonry',    name: 'Reinforced Masonry',    desc: 'Increases all walls and gates max HP by +100.', goldCost: 150, stoneCost: 50, ironCost: 0,  woodCost: 0,  requires: 0 },
+    { key: 'steel_bows',            name: 'Steel Bows',            desc: 'Increases Archer attack damage by +5.',          goldCost: 150, stoneCost: 0,  ironCost: 50, woodCost: 0,  requires: 0 },
+    { key: 'heavy_armor',           name: 'Heavy Armor',           desc: 'Increases Knight max HP by +50.',                goldCost: 200, stoneCost: 0,  ironCost: 80, woodCost: 0,  requires: 2 },
+    { key: 'crop_rotation',         name: 'Crop Rotation',         desc: 'Increases Farm food yield by +2.',               goldCost: 100, stoneCost: 0,  ironCost: 0,  woodCost: 50, requires: 0 },
+    { key: 'ballistic_engineering', name: 'Ballistic Engineering', desc: 'Ballista range +3 tiles, bolt damage +15.',      goldCost: 200, stoneCost: 0,  ironCost: 50, woodCost: 0,  requires: 2 },
+    { key: 'iron_discipline',       name: 'Iron Discipline',       desc: 'Soldiers spawn with +25 max HP (100→125).',      goldCost: 150, stoneCost: 0,  ironCost: 40, woodCost: 0,  requires: 0 },
+    { key: 'trade_guilds',          name: 'Trade Guilds',          desc: 'Tax income +1 gold per citizen per tick.',       goldCost: 180, stoneCost: 0,  ironCost: 20, woodCost: 0,  requires: 0 },
+    { key: 'field_medicine',        name: 'Field Medicine',        desc: 'Military units regenerate HP 2× faster.',        goldCost: 150, stoneCost: 0,  ironCost: 0,  woodCost: 30, requires: 0 },
+];
+
+function countCompletedResearch() {
+    return Object.values(gameState.upgrades || {}).filter(Boolean).length;
+}
+
 export function updateResearchModalUI() {
     const listEl = document.getElementById('research-upgrades-list');
     if (!listEl) return;
-    
-    const UPGRADES_INFO = [
-        {
-            key: 'reinforced_masonry',
-            name: 'Reinforced Masonry',
-            desc: 'Increases all walls and gates max HP by +100.',
-            goldCost: 150,
-            stoneCost: 50,
-            ironCost: 0,
-            woodCost: 0
-        },
-        {
-            key: 'steel_bows',
-            name: 'Steel Bows',
-            desc: 'Increases Archer attack damage by +5.',
-            goldCost: 150,
-            stoneCost: 0,
-            ironCost: 50,
-            woodCost: 0
-        },
-        {
-            key: 'heavy_armor',
-            name: 'Heavy Armor',
-            desc: 'Increases Knight max HP by +50.',
-            goldCost: 200,
-            stoneCost: 0,
-            ironCost: 80,
-            woodCost: 0
-        },
-        {
-            key: 'crop_rotation',
-            name: 'Crop Rotation',
-            desc: 'Increases Farm food yield by +2.',
-            goldCost: 100,
-            stoneCost: 0,
-            ironCost: 0,
-            woodCost: 50
-        },
-        {
-            key: 'ballistic_engineering',
-            name: 'Ballistic Engineering',
-            desc: 'Ballista range +3 tiles, bolt damage +15.',
-            goldCost: 200,
-            stoneCost: 0,
-            ironCost: 50,
-            woodCost: 0
-        },
-        {
-            key: 'iron_discipline',
-            name: 'Iron Discipline',
-            desc: 'Soldiers spawn with +15 max HP (100→115).',
-            goldCost: 150,
-            stoneCost: 0,
-            ironCost: 40,
-            woodCost: 0
-        },
-        {
-            key: 'trade_guilds',
-            name: 'Trade Guilds',
-            desc: 'Tax income +1 gold per citizen per tick.',
-            goldCost: 180,
-            stoneCost: 0,
-            ironCost: 20,
-            woodCost: 0
-        },
-        {
-            key: 'field_medicine',
-            name: 'Field Medicine',
-            desc: 'Military units regenerate HP 2× faster.',
-            goldCost: 150,
-            stoneCost: 0,
-            ironCost: 0,
-            woodCost: 30
-        }
-    ];
 
-    listEl.innerHTML = UPGRADES_INFO.map(upg => {
+    const completedCount = countCompletedResearch();
+    listEl.innerHTML = RESEARCH_DEFS.map(upg => {
         const isUnlocked = gameState.upgrades && gameState.upgrades[upg.key];
         const isResearching = gameState.activeResearch && gameState.activeResearch.upgradeKey === upg.key;
-        
+
         let statusHtml = '';
         let progressOverlay = '';
-        
+
         if (isUnlocked) {
             statusHtml = '<span class="upgrade-card-status unlocked">✓ UNLOCKED</span>';
         } else if (isResearching) {
+            const researchDur = gameState.activeResearch.duration ?? 15.0;
             const timeRemaining = Math.ceil(gameState.activeResearch.timer);
-            const pct = ((15.0 - gameState.activeResearch.timer) / 15.0) * 100;
-            statusHtml = `<span class="upgrade-card-status researching">RESEARCHING (${timeRemaining}s)</span>`;
+            const pct = ((researchDur - gameState.activeResearch.timer) / researchDur) * 100;
+            statusHtml = `<span class="upgrade-card-status researching">RESEARCHING (${timeRemaining}s — resumes on close)</span>`;
             progressOverlay = `<div class="upgrade-progress-overlay" style="width: ${pct}%"></div>`;
         } else {
             const goldOk = gameState.gold >= upg.goldCost;
@@ -463,8 +444,11 @@ export function updateResearchModalUI() {
             const ironOk = gameState.iron >= upg.ironCost;
             const canAfford = goldOk && woodOk && stoneOk && ironOk;
             const busy = gameState.activeResearch !== null && gameState.activeResearch !== undefined;
-            
-            if (busy) {
+            const prereqMet = completedCount >= (upg.requires || 0);
+
+            if (!prereqMet) {
+                statusHtml = `<button class="scroll-btn upgrade-card-btn" disabled>NEEDS ${upg.requires} TECH</button>`;
+            } else if (busy) {
                 statusHtml = '<button class="scroll-btn upgrade-card-btn" disabled>QUEUED</button>';
             } else if (!canAfford) {
                 statusHtml = '<button class="scroll-btn upgrade-card-btn danger" disabled>LOCKED</button>';
@@ -495,33 +479,28 @@ export function updateResearchModalUI() {
 
 function startResearch(upgradeKey) {
     if (gameState.activeResearch) return;
-    
-    const UPGRADES_COSTS = {
-        reinforced_masonry:    { gold: 150, stone: 50, iron: 0,  wood: 0  },
-        steel_bows:            { gold: 150, stone: 0,  iron: 50, wood: 0  },
-        heavy_armor:           { gold: 200, stone: 0,  iron: 80, wood: 0  },
-        crop_rotation:         { gold: 100, stone: 0,  iron: 0,  wood: 50 },
-        ballistic_engineering: { gold: 200, stone: 0,  iron: 50, wood: 0  },
-        iron_discipline:       { gold: 150, stone: 0,  iron: 40, wood: 0  },
-        trade_guilds:          { gold: 180, stone: 0,  iron: 20, wood: 0  },
-        field_medicine:        { gold: 150, stone: 0,  iron: 0,  wood: 30 },
-    };
-    
-    const cost = UPGRADES_COSTS[upgradeKey];
-    if (!cost) return;
-    
-    if (gameState.gold < cost.gold || gameState.wood < cost.wood || gameState.stone < cost.stone || gameState.iron < cost.iron) return;
-    
-    gameState.gold -= cost.gold;
-    gameState.wood -= cost.wood;
-    gameState.stone -= cost.stone;
-    gameState.iron -= cost.iron;
-    
+
+    const def = RESEARCH_DEFS.find(u => u.key === upgradeKey);
+    if (!def) return;
+    if (gameState.upgrades?.[upgradeKey]) return;
+    if (countCompletedResearch() < (def.requires || 0)) return;
+
+    if (gameState.gold < def.goldCost || gameState.wood < def.woodCost || gameState.stone < def.stoneCost || gameState.iron < def.ironCost) return;
+
+    gameState.gold -= def.goldCost;
+    gameState.wood -= def.woodCost;
+    gameState.stone -= def.stoneCost;
+    gameState.iron -= def.ironCost;
+
+    // Research takes longer as the tech base grows (30s → 60s cap), so raid
+    // cadence and research order become real decisions instead of a vending machine.
+    const duration = Math.min(60, 30 + 10 * countCompletedResearch());
     gameState.activeResearch = {
         upgradeKey,
-        timer: 15.0
+        timer: duration,
+        duration,
     };
-    
+
     playBuildSFX();
     refreshUI();
     updateResearchModalUI();
@@ -600,7 +579,7 @@ function chooseDiplomacyOption(opt) {
 export function closeBuildingPanel() {
     _buildingPanelOpen = false;
     const panel = document.getElementById('building-panel');
-    if (panel) panel.classList.add('hidden');
+    if (panel) panel.classList.remove('open');
 }
 
 function openBuildingPanel(tx, ty) {
@@ -717,6 +696,8 @@ function openBuildingPanel(tx, ty) {
         const ds = grid.structures[pty]?.[ptx];
         closeBuildingPanel();
         if (ds && BUILDINGS[ds.def.key]) {
+            const dw = ds.def.width || 1;
+            const dh = ds.def.height || 1;
             gameState.gold    += Math.floor(getScaledCost(ds.def.key) * 0.5);
             if (ds.def.key === 'house') gameState.housesBuilt = Math.max(0, (gameState.housesBuilt || 0) - 1);
             else if (ds.def.key === 'farm') gameState.farmsBuilt = Math.max(0, (gameState.farmsBuilt || 0) - 1);
@@ -725,6 +706,7 @@ function openBuildingPanel(tx, ty) {
             grid.demolish(ptx, pty);
             grid.structures[pty][ptx] = { def: RUBBLE_DEF, decayTimer: DAY_DURATION };
             playDemolishSFX();
+            patchStaticCache(ptx, pty, dw, dh);
             rebuildStructureLists();
             refreshUI();
         }
@@ -741,12 +723,18 @@ function openBuildingPanel(tx, ty) {
 
     panel.style.left = Math.min(Math.max(viewX, 4), window.innerWidth  - 210) + 'px';
     panel.style.top  = Math.min(Math.max(viewY, 4), window.innerHeight - 220) + 'px';
-    panel.classList.remove('hidden');
+    panel.classList.add('open');
 }
 
 // ===================== LEADERBOARD & SCORE =====================
 export // ===================== HIGH SCORE LEADERBOARD =====================
 const LEADERBOARD_KEY = 'pixel_dominion_highscores';
+
+// Player-typed names are rendered via innerHTML — escape them (stored XSS guard)
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 
 function getHighScores() {
     try {
@@ -782,7 +770,7 @@ function updateLeaderboardDisplays() {
     if (body) {
         body.innerHTML = scores.map((s, i) => `<tr>
             <td>${i + 1}</td>
-            <td class="highlight">${s.name}</td>
+            <td class="highlight">${escapeHtml(s.name)}</td>
             <td>${s.day}</td>
             <td>${s.raiders}</td>
             <td>${s.gold}</td>
@@ -804,7 +792,7 @@ function updateLeaderboardDisplays() {
     if (startBody) {
         startBody.innerHTML = scores.map((s, i) => `<tr>
             <td>${i + 1}</td>
-            <td>${s.name}</td>
+            <td>${escapeHtml(s.name)}</td>
             <td>${s.day}</td>
             <td>${s.raiders}</td>
             <td>${s.gold}</td>
@@ -943,31 +931,44 @@ function triggerDefeat() {
 
 
 // ===================== RAID HUD =====================
+// Runs every frame — cache DOM nodes and last-written strings so identical
+// frames produce zero DOM mutations (textContent writes always replace the node).
+const _raidHudEls = {};
+const _raidHudCache = {};
+function _hudEl(id) {
+    if (!(id in _raidHudEls)) _raidHudEls[id] = document.getElementById(id);
+    return _raidHudEls[id];
+}
+function _hudText(id, text) {
+    const el = _hudEl(id);
+    if (el && _raidHudCache[id] !== text) { _raidHudCache[id] = text; el.textContent = text; }
+}
+function _hudClass(id, cls, on) {
+    const el = _hudEl(id);
+    const key = id + '.' + cls;
+    if (el && _raidHudCache[key] !== on) { _raidHudCache[key] = on; el.classList.toggle(cls, on); }
+}
+
 export function updateRaidHUD() {
-    const timerEl = document.getElementById('res-raid-timer');
-    const warnEl  = document.getElementById('raid-warning');
-    const scroll  = document.getElementById('raid-scroll');
-    const eyebrow = document.getElementById('raid-eyebrow');
-    const waveEl  = document.getElementById('raid-wave-indicator');
-    const finalRaidWave = 10;
+    const finalRaidWave = window.FINAL_RAID_WAVE ?? 10;
     const waveNum = Math.min((window.raidCount ?? 0) + 1, finalRaidWave);
-    if (waveEl) waveEl.textContent = `WAVE ${waveNum}/${finalRaidWave}${waveNum === finalRaidWave ? ' FINAL' : ''}`;
+    _hudText('raid-wave-indicator', `WAVE ${waveNum}/${finalRaidWave}${waveNum === finalRaidWave ? ' FINAL' : ''}`);
     if (raidActive) {
-        if (timerEl) timerEl.textContent = formatTime(raidActiveTimer);
-        if (eyebrow) eyebrow.textContent = '⚔ RAID ⚔';
-        if (warnEl)  warnEl.classList.add('active');
-        if (scroll)  scroll.classList.add('warning');
+        _hudText('res-raid-timer', formatTime(raidActiveTimer));
+        _hudText('raid-eyebrow', '⚔ RAID ⚔');
+        _hudClass('raid-warning', 'active', true);
+        _hudClass('raid-scroll', 'warning', true);
     } else if (_scoutPhase) {
-        if (timerEl) timerEl.textContent = formatTime(_scoutTimer);
-        if (warnEl)  warnEl.classList.add('active');
-        if (scroll)  scroll.classList.add('warning');
-        if (eyebrow) eyebrow.textContent = '⚑ SCOUTS SPOTTED ⚑';
+        _hudText('res-raid-timer', formatTime(_scoutTimer));
+        _hudClass('raid-warning', 'active', true);
+        _hudClass('raid-scroll', 'warning', true);
+        _hudText('raid-eyebrow', '⚑ SCOUTS SPOTTED ⚑');
     } else {
-        if (timerEl) timerEl.textContent = formatTime(raidTimer);
+        _hudText('res-raid-timer', formatTime(raidTimer));
         const isWarn = !gameIsPaused && raidTimer <= 30 && raidTimer > 0;
-        if (warnEl)  warnEl.classList.toggle('active', isWarn);
-        if (scroll)  scroll.classList.toggle('warning', isWarn);
-        if (eyebrow) eyebrow.textContent = isWarn ? '⚔ RAID APPROACHES ⚔' : 'NEXT RAID';
+        _hudClass('raid-warning', 'active', isWarn);
+        _hudClass('raid-scroll', 'warning', isWarn);
+        _hudText('raid-eyebrow', isWarn ? '⚔ RAID APPROACHES ⚔' : 'NEXT RAID');
         if (isWarn) {
             if (!raidWarningPlayed) { window.setRaidWarningPlayed(true); playRaidWarningSFX(); }
         } else {
@@ -1027,11 +1028,17 @@ document.getElementById('btn-doubletime').addEventListener('click', () => {
 // ===================== RESOURCE BAR & BUILD MENU =====================
 export // --- UI ---
 function updateResourceUI() {
+    // Cache last-written values so unchanged chips produce no DOM mutations
+    const cache = updateResourceUI._cache || (updateResourceUI._cache = {});
     const set = (id, text, cls) => {
         const el = document.getElementById(id);
         if (!el) return;
-        el.textContent = text;
-        if (cls !== undefined) el.className = 'chip-value' + (cls ? ' ' + cls : '');
+        const t = String(text);
+        if (cache[id] !== t) { cache[id] = t; el.textContent = t; }
+        if (cls !== undefined) {
+            const cn = 'chip-value' + (cls ? ' ' + cls : '');
+            if (cache[id + '.c'] !== cn) { cache[id + '.c'] = cn; el.className = cn; }
+        }
     };
     set('res-gold',      `${Math.round(gameState.gold)}`, 'treasure');
     set('res-housing',   gameState.housing);
@@ -1193,7 +1200,13 @@ function updateBuildMenu() {
             if (woodCost > 0)  parts.push(`<span class="build-cost-wood">◆ ${woodCost}</span>`);
             if (stoneCost > 0) parts.push(`<span class="build-cost-stone">⬟ ${stoneCost}</span>`);
             if (ironCost > 0)  parts.push(`<span class="build-cost-iron">◇ ${ironCost}</span>`);
-            costsEl.innerHTML = parts.join('');
+            // Costs only change when housesBuilt/farmsBuilt scale — skip the
+            // innerHTML rebuild (layout work) on the frames where they haven't.
+            const newCosts = parts.join('');
+            if (costsEl.dataset.cache !== newCosts) {
+                costsEl.dataset.cache = newCosts;
+                costsEl.innerHTML = newCosts;
+            }
         }
         const canAfford = gameState.gold >= cost && gameState.wood >= woodCost && gameState.iron >= ironCost && gameState.stone >= stoneCost;
         btn.disabled = !canAfford;
@@ -1256,6 +1269,22 @@ export function _buildGrassCache() {
 
 
 // ===================== RENDERING PIPELINE =====================
+// Torch-glow sprite, rendered once and reused every frame
+let _glowSprite = null;
+function _getGlowSprite() {
+    if (_glowSprite) return _glowSprite;
+    const c = document.createElement('canvas');
+    c.width = 96; c.height = 96;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(48, 48, 0, 48, 48, 48);
+    grad.addColorStop(0, 'rgba(255,180,60,0.35)');
+    grad.addColorStop(1, 'rgba(255,100,0,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 96, 96);
+    _glowSprite = c;
+    return c;
+}
+
 export function renderWorldOverlay() {
     if (!gameState.started) return;
     const { x: camX, y: camY, zoom } = camera;
@@ -1339,8 +1368,12 @@ export function renderWorldOverlay() {
         if (p.type !== 'floating_text') continue;
         ctx.globalAlpha = p.alpha;
         ctx.fillStyle = p.color || '#ff2222';
-        const curY = p.y - (p.timer / p.duration) * 20;
-        ctx.fillText(p.text, p.x, curY);
+        // Eased rise with slight horizontal drift so stacked hits stay readable
+        const t = p.timer / p.duration;
+        const ease = 1 - (1 - t) * (1 - t);
+        const curY = p.y - ease * 24;
+        const curX = p.x + (p.driftX || 0) * ease;
+        ctx.fillText(p.text, curX, curY);
     }
     ctx.globalAlpha = 1.0;
 
@@ -1515,24 +1548,24 @@ function render() {
     renderWorldOverlay();
     camera.x = savedCamX; camera.y = savedCamY;
 
-    // Torch glow — additive radial gradients on towers and gates during dusk/night
+    // Torch glow — pre-rendered glow sprite drawn additively on towers/gates during
+    // dusk/night (replaces a per-tower per-frame createRadialGradient allocation).
     if ((_dayPhase === 'night' || _dayPhase === 'dusk') && (_overlayAlpha > 0.01)) {
         const _glowScale = _dayPhase === 'dusk' ? 0.5 : 1.0;
         const { zoom } = camera;
         const camX = savedCamX, camY = savedCamY;
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = _glowScale;
+        const glow = _getGlowSprite();
         for (const list of [window.activeTowers, window.activeGates]) {
             for (const { tx, ty } of list) {
                 const sx = (tx * TILE_SIZE + TILE_SIZE / 2) * zoom - camX * zoom;
                 const sy = (ty * TILE_SIZE + TILE_SIZE / 2) * zoom - camY * zoom;
-                const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, 48);
-                grad.addColorStop(0, `rgba(255,180,60,${0.35 * _glowScale})`);
-                grad.addColorStop(1, 'rgba(255,100,0,0)');
-                ctx.fillStyle = grad;
-                ctx.fillRect(sx - 48, sy - 48, 96, 96);
+                ctx.drawImage(glow, sx - 48, sy - 48);
             }
         }
+        ctx.globalAlpha = 1.0;
         ctx.globalCompositeOperation = 'source-over';
     }
 
@@ -1630,6 +1663,49 @@ export function _buildStaticCache() {
     _staticCanvas = oc;
 }
 
+// Repaint only the tiles around a mutated structure instead of re-rendering the
+// whole 2048×2048 static canvas (which caused a frame hitch on every build,
+// demolition, fire loss, and rubble decay). Pads by 1 tile so neighbours whose
+// sprites overlap the region repaint cleanly.
+export function patchStaticCache(tx, ty, w = 1, h = 1) {
+    const assets = window.assets;
+    if (!_staticCanvas || !grid || !assets) return; // full build happens at init/load
+    const T = TILE_SIZE;
+    const octx = _staticCanvas.getContext('2d');
+    octx.imageSmoothingEnabled = false;
+    const x0 = Math.max(0, tx - 1), y0 = Math.max(0, ty - 1);
+    const x1 = Math.min(grid.width - 1, tx + w), y1 = Math.min(grid.height - 1, ty + h);
+    octx.clearRect(x0 * T, y0 * T, (x1 - x0 + 1) * T, (y1 - y0 + 1) * T);
+    if (_grassCanvas) {
+        octx.drawImage(_grassCanvas,
+            x0 * T, y0 * T, (x1 - x0 + 1) * T, (y1 - y0 + 1) * T,
+            x0 * T, y0 * T, (x1 - x0 + 1) * T, (y1 - y0 + 1) * T);
+    }
+    for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+            const tile = grid.tiles[y][x];
+            if (tile !== 'tile_grass' && assets[tile]) {
+                octx.drawImage(assets[tile], x * T, y * T, T, T);
+            }
+            const s = grid.structures[y][x];
+            if (!s || s.isChild) continue;
+            const key = s.def.key;
+            // Dynamic buildings are drawn per-frame on top of the static layer
+            if (key === 'monument' || key === 'academy' || key === 'tower' || key === 'ballista_tower' || key === 'gate') continue;
+            if ((s.progress ?? 1.0) < 1.0) continue;
+            const asset = assets[s.def.assetKey];
+            const sw = (s.def.width || 1) * T;
+            const sh = (s.def.height || 1) * T;
+            if (asset) {
+                octx.drawImage(asset, x * T, y * T, sw, sh);
+            } else {
+                octx.fillStyle = s.def.color;
+                octx.fillRect(x * T, y * T, sw, sh);
+            }
+        }
+    }
+}
+
 export function rebuildStructureLists() {
     const activeTowers = [];
     const activeBallistaTowers = [];
@@ -1641,6 +1717,9 @@ export function rebuildStructureLists() {
     const activeHouses = [];
     const activeGranaries = [];
     const activeTaverns = [];
+    const activeRubble = [];
+    const activeBarracks = [];
+    const activeArcheryRanges = [];
     const buildingCounts = {};
     const jobfulStructures = [];
     const underConstruction = [];
@@ -1666,6 +1745,9 @@ export function rebuildStructureLists() {
             if (key === 'house')          activeHouses.push({ tx, ty });
             if (key === 'granary')        activeGranaries.push({ tx, ty });
             if (key === 'tavern')         activeTaverns.push({ tx, ty });
+            if (key === 'rubble')         activeRubble.push({ tx, ty });
+            if (key === 'barracks')       activeBarracks.push({ tx, ty });
+            if (key === 'archery_range')  activeArcheryRanges.push({ tx, ty });
             if (_PILLAGEABLE.has(key))    activePillageable.push({ tx, ty });
             if (s.def.maxWorkers)         jobfulStructures.push({ tx, ty, def: s.def });
             if ((s.progress ?? 1.0) < 1.0) underConstruction.push({ tx, ty });
@@ -1674,9 +1756,11 @@ export function rebuildStructureLists() {
     window.setBuildingLists({
         activeTowers, activeBallistaTowers, activeGates, activeFarms, activeMonuments,
         activeWalls, activePillageable, activeHouses, activeGranaries, activeTaverns,
+        activeRubble, activeBarracks, activeArcheryRanges,
         buildingCounts, jobfulStructures, underConstruction
     });
-    _buildStaticCache();
+    // NOTE: the static canvas is no longer rebuilt here. Mutation sites call
+    // patchStaticCache(tx, ty, w, h); init/load call _buildStaticCache() once.
 }
 export function showExpansionBanner() {
     const banner = document.getElementById('expansion-banner');
@@ -1713,7 +1797,7 @@ export function getAdjacencyBonus(tx, ty, buildingType) {
         if (buildingType === 'tavern'     && k === 'house')                             count++;
     }
     switch (buildingType) {
-        case 'farm':      return count * 0.5;
+        case 'farm':      return count * 1.5; // was 0.5 — too small vs 13.5 base to plan around
         case 'lumberyard': return count * 1.0;
         case 'quarry':    return count * 1.0;
         case 'mine':      return count * 1.0;
@@ -1779,9 +1863,11 @@ function calcHappiness() {
         score += 10; _happinessFactors.push({ label: 'Tavern', signs: '++', polarity: 'pos' });
     }
 
-    // Tavern adjacency bonus
+    // Tavern adjacency bonus (capped — house-ringed tavern farms were an exploit
+    // that permanently locked in the fast spawn tier)
     let tavernAdjBonus = 0;
     for (const t of window.activeTaverns) tavernAdjBonus += getAdjacencyBonus(t.tx, t.ty, 'tavern');
+    tavernAdjBonus = Math.min(9, tavernAdjBonus);
     if (tavernAdjBonus > 0) {
         score += tavernAdjBonus;
         const adjSigns = tavernAdjBonus >= 12 ? '+++' : tavernAdjBonus >= 6 ? '++' : '+';
@@ -1845,7 +1931,7 @@ Object.assign(window, {
 
     rebuildStructureLists, showExpansionBanner, getAdjacencyBonus, getFoodCap,
     countBuildings, getScaledCost, calcDefense, calcHappiness, getSpawnInterval, formatTime,
-    _buildStaticCache, _staticCanvas,
+    _buildStaticCache, _staticCanvas, patchStaticCache,
 
     GameGrid, openResearchModal, closeResearchModal, showDiplomacyModal, chooseDiplomacyOption,
     closeBuildingPanel, openBuildingPanel, updateResearchModalUI, startResearch, updateResearch,

@@ -738,9 +738,30 @@ canvas { display: block; width: 100%; height: 100%; }
 .chip-value.treasure { color: var(--gold-dark); }
 .chip-value.healthy  { color: var(--leaf-dark); }
 .chip-value.low      { color: #a85a18; }
-.chip-value.critical { color: var(--wine); }
+.chip-value.critical { color: var(--wine); animation: chip-deficit 1.1s ease-in-out infinite; }
+
+@keyframes chip-deficit {
+    0%, 100% { text-shadow: none; }
+    50% { text-shadow: 0 0 6px rgba(200, 40, 20, 0.9); }
+}
 
 /* ===== HAPPINESS TOOLTIP ===== */
+#happiness-tooltip {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    min-width: 160px;
+    background: #1a1208;
+    border: 1px solid #c8a84b;
+    border-radius: 3px;
+    padding: 6px 8px;
+    z-index: 999;
+    pointer-events: none;
+    margin-bottom: 4px;
+}
+
 .ht-row {
     display: flex;
     justify-content: space-between;
@@ -990,21 +1011,38 @@ canvas { display: block; width: 100%; height: 100%; }
 }
 
 /* ===== MODALS ===== */
+/* Always laid out (flex) but invisible until .open, so opacity/transform can animate.
+   visibility keeps hidden modals out of the tab order; pointer-events lets clicks pass. */
 .modal-overlay {
     position: absolute;
     inset: 0;
     background: rgba(29, 24, 20, 0.75);
-    display: none;
+    display: flex;
     align-items: center;
     justify-content: center;
     z-index: 100;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.22s ease, visibility 0s linear 0.22s;
 }
 
-.modal-overlay.open { display: flex; }
+.modal-overlay.open {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: opacity 0.22s ease;
+}
 
 .modal-parchment {
     padding: 0;
     box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+    transform: translateY(14px) scale(0.98);
+    transition: transform 0.26s cubic-bezier(0.18, 0.9, 0.32, 1.15);
+}
+
+.modal-overlay.open .modal-parchment {
+    transform: translateY(0) scale(1);
 }
 
 /* ===== TRADE MODAL ===== */
@@ -1407,6 +1445,30 @@ canvas { display: block; width: 100%; height: 100%; }
     }
 }
 
+/* Mid-width screens: let the bottom HUD wrap instead of overflowing, and drop
+   the vertical pod labels in favour of the chip icons */
+@media (max-width: 1100px) {
+    #hud-bar {
+        flex-wrap: wrap;
+        row-gap: 4px;
+        max-width: calc(100vw - 24px);
+        justify-content: center;
+    }
+    .pod-label { display: none; }
+    .hud-pod { padding: 4px 10px; }
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    #building-panel,
+    .modal-overlay,
+    .modal-overlay .modal-parchment,
+    .upgrade-progress-overlay {
+        transition: none;
+    }
+    .chip-value.critical { animation: none; }
+}
+
 /* ===== STONE COST STYLE ===== */
 .build-cost-stone { color: #5a5a5a; font-family: 'EB Garamond', serif; }
 
@@ -1759,6 +1821,7 @@ canvas { display: block; width: 100%; height: 100%; }
     background: rgba(255, 221, 87, 0.08);
     pointer-events: none;
     z-index: 0;
+    transition: width 0.4s linear;
 }
 @keyframes text-pulse {
     0% { opacity: 0.6; }
@@ -1847,10 +1910,21 @@ canvas { display: block; width: 100%; height: 100%; }
     display: flex;
     flex-direction: column;
     gap: 7px;
-    pointer-events: all;
+    /* Hidden by default; .open slides/fades it in */
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+    pointer-events: none;
+    transition: opacity 0.16s ease, transform 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 
-#building-panel.hidden { display: none; }
+#building-panel.open {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+}
+
+/* Panel buttons toggled with .hidden by JS (previously had no matching rule) */
+.panel-btn.hidden { display: none; }
 
 .panel-close-btn {
     position: absolute;

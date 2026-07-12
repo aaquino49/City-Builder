@@ -1,5 +1,5 @@
 // Pixel Dominion — State & Settings Module
-import { rebuildStructureLists, _buildGrassCache, refreshUI, updateRaidHUD, updateCombatModeUI, _updateDayPhaseGlyph, updateDaySeason } from '../ui/ui.js';
+import { rebuildStructureLists, _buildGrassCache, _buildStaticCache, refreshUI, updateRaidHUD, updateCombatModeUI, _updateDayPhaseGlyph, updateDaySeason } from '../ui/ui.js';
 import { showEventBanner } from '../systems/systems.js';
 import { Citizen, Soldier, Archer, Knight, MerchantNPC, Raider } from '../entities/entities.js';
 
@@ -78,6 +78,9 @@ export const AUTOSAVE_INTERVAL = 10.0;
 export const SAVE_KEY = 'pixel_dominion_save';
 export const RAID_DURATION = 180;
 export const RAID_ACTIVE_TIMEOUT = 90;
+// Smooth ~1.5× growth per wave (previously spiked 6→15 and 35→60)
+export const RAID_WAVE_SIZES = Object.freeze([3, 7, 12, 20, 32, 48, 70, 100, 140, 190]);
+export const FINAL_RAID_WAVE = RAID_WAVE_SIZES.length;
 
 export const TIER2_UPGRADES = {
     farm:        { name: 'Improved Farm',      goldCost: 80,  woodCost: 30, stoneCost: 0  },
@@ -92,7 +95,7 @@ export const UNIT_BALANCE = Object.freeze({
     soldier: Object.freeze({
         goldCost: 40,
         baseHp: 100,
-        ironDisciplineHpBonus: 15,
+        ironDisciplineHpBonus: 25,
         barracksTier2HpBonus: 25,
     }),
     archer: Object.freeze({
@@ -170,6 +173,7 @@ export function releaseVisualProjectile(p) {
 export function spawnParticle(x, y, type, duration = 0.4, text = null, color = null) {
     const p = getPooledParticle();
     p.x = x; p.y = y; p.type = type; p.timer = 0; p.duration = duration; p.text = text; p.color = color; p.alpha = 1.0;
+    p.driftX = 0; // pooled particle may carry drift from a previous spawnFloat
     particles.push(p);
     return p;
 }
@@ -181,7 +185,8 @@ Object.assign(window, {
     STONE_SPAWN_CHANCE, IRON_SPAWN_CHANCE, ROAD_COST, ALL_DEFS, SEASON_MODIFIERS, SEASONS,
     DAY_PHASES, DAY_DURATION, SEASON_DURATION, TAX_INTERVAL, FOOD_CAP_BASE,
     FOOD_CAP_PER_GRANARY, EMIGRATION_INTERVAL, AUTOSAVE_INTERVAL, SAVE_KEY, RAID_DURATION,
-    RAID_ACTIVE_TIMEOUT, TIER2_UPGRADES, UNIT_BALANCE, ECONOMY_BALANCE, PRODUCTION_BALANCE,
+    RAID_ACTIVE_TIMEOUT, RAID_WAVE_SIZES, FINAL_RAID_WAVE,
+    TIER2_UPGRADES, UNIT_BALANCE, ECONOMY_BALANCE, PRODUCTION_BALANCE,
     DIFFICULTY_PRESETS, DEFAULT_DIFFICULTY_KEY,
     PROJECTILE_POOL, PARTICLE_POOL, VISUAL_PROJECTILE_POOL, getPooledProjectile, releaseProjectile,
     getPooledParticle, releaseParticle, getPooledVisualProjectile, releaseVisualProjectile, spawnParticle
@@ -233,7 +238,8 @@ export const STATE_SCHEMA = Object.freeze({
     derived: Object.freeze([
         'activeTowers', 'activeBallistaTowers', 'activeGates', 'activeFarms',
         'activeMonuments', 'activeWalls', 'activePillageable', 'activeHouses',
-        'activeGranaries', 'activeTaverns', 'buildingCounts',
+        'activeGranaries', 'activeTaverns', 'activeRubble', 'activeBarracks',
+        'activeArcheryRanges', 'buildingCounts',
         'jobfulStructures', 'underConstruction',
     ]),
 });
@@ -286,6 +292,13 @@ export const knights = [];
 export const activeProjectiles = [];
 export const raiders = [];
 
+// Territory radius counts every population-derived unit so that training an
+// archer/knight (which consumes a citizen) never shrinks the border.
+export function calcTerritoryRadius() {
+    return 3 + Math.floor((citizens.length + soldiers.length + archers.length + knights.length) / 4);
+}
+window.calcTerritoryRadius = calcTerritoryRadius;
+
 export function getDifficultyPreset(key) {
     return DIFFICULTY_PRESETS[key] || DIFFICULTY_PRESETS[DEFAULT_DIFFICULTY_KEY];
 }
@@ -326,6 +339,9 @@ export let activePillageable = [];
 export let activeHouses = [];
 export let activeGranaries = [];
 export let activeTaverns = [];
+export let activeRubble = [];
+export let activeBarracks = [];
+export let activeArcheryRanges = [];
 
 export const _PILLAGEABLE = new Set(['farm','lumberyard','quarry','mine','house','barracks','archery_range','academy','monument']);
 export let buildingCounts = {};
@@ -409,6 +425,7 @@ const _bindGlobals = () => {
         lastMouseX, lastMouseY, mouseScreenX, mouseScreenY,
         activeTowers, activeBallistaTowers, activeGates, activeFarms, activeMonuments,
         activeWalls, activePillageable, activeHouses, activeGranaries, activeTaverns,
+        activeRubble, activeBarracks, activeArcheryRanges,
         buildingCounts, jobfulStructures, underConstruction
     });
 };
@@ -502,6 +519,9 @@ export function setBuildingLists(lists) {
     activeHouses = lists.activeHouses; window.activeHouses = lists.activeHouses;
     activeGranaries = lists.activeGranaries; window.activeGranaries = lists.activeGranaries;
     activeTaverns = lists.activeTaverns; window.activeTaverns = lists.activeTaverns;
+    activeRubble = lists.activeRubble; window.activeRubble = lists.activeRubble;
+    activeBarracks = lists.activeBarracks; window.activeBarracks = lists.activeBarracks;
+    activeArcheryRanges = lists.activeArcheryRanges; window.activeArcheryRanges = lists.activeArcheryRanges;
     buildingCounts = lists.buildingCounts; window.buildingCounts = lists.buildingCounts;
     jobfulStructures = lists.jobfulStructures; window.jobfulStructures = lists.jobfulStructures;
     underConstruction = lists.underConstruction; window.underConstruction = lists.underConstruction;
@@ -526,7 +546,7 @@ Object.assign(window, {
 });
 
 // ===================== PERSISTENCE / SAVING =====================
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 
 function migrateSaveToV3(data) {
     return Object.assign(data, {
@@ -568,6 +588,23 @@ function migrateSaveToV6(data) {
     return data;
 }
 
+function migrateSaveToV7(data) {
+    // V7 persists active-raid state. Older saves derive it from the raiders array
+    // so a mid-raid save no longer loads into a broken "raiders but no raid" state.
+    if (data.raidActive === undefined) {
+        data.raidActive = (data.raiders || []).some(r => r.state === 'walking');
+    }
+    if (data.raidActiveTimer === undefined) data.raidActiveTimer = 0;
+    if (data.raidBuildingsDestroyed === undefined) data.raidBuildingsDestroyed = 0;
+    if (data.raidCitizensKilled === undefined) data.raidCitizensKilled = 0;
+    // Research entries gained a per-entry duration (was a hardcoded 15s)
+    if (data.activeResearch && data.activeResearch.duration === undefined) {
+        data.activeResearch.duration = 15;
+    }
+    data.version = 7;
+    return data;
+}
+
 export function migrateSaveData(data) {
     if (!data || typeof data !== 'object') return null;
     if (!data.version || data.version < 3) {
@@ -583,6 +620,9 @@ export function migrateSaveData(data) {
     if (data.version < 6) {
         data = migrateSaveToV6(data);
     }
+    if (data.version < 7) {
+        data = migrateSaveToV7(data);
+    }
     data.version = Math.min(data.version || SAVE_VERSION, SAVE_VERSION);
     return data;
 }
@@ -595,6 +635,7 @@ export function saveGame() {
         difficulty: gameState.difficulty,
         wood: gameState.wood, stone: gameState.stone, iron: gameState.iron,
         raidTimer, raidStrength, raidCount, _scoutTimer, _scoutPhase, _raidQueued, _dayPhase, _griefPenalty, _combatMode,
+        raidActive, raidActiveTimer, raidBuildingsDestroyed, raidCitizensKilled,
         _allianceTimer, _soldierCostMult, _soldierCostTimer,
         diplomacyTimers: _diplomacyTimers.map(t => ({ remainingSec: t.remainingSec, actionKey: t.actionKey })),
         dayTimer, day: gameState.day, season: gameState.season,
@@ -846,9 +887,18 @@ export function loadGame() {
     setGameIsPaused(false);
     setUserPaused(false);
     setTimeScale(1);
-    setCurrentTerritoryRadius(3 + Math.floor((citizens.length + soldiers.length) / 4));
+    setCurrentTerritoryRadius(calcTerritoryRadius());
     rebuildStructureLists();
     _buildGrassCache();
+    _buildStaticCache();
+    // Restore active-raid state AFTER raiders/citizens/structure lists exist, so
+    // defenders re-engage and citizens re-hide when a mid-raid save is loaded.
+    setRaidActive(d.raidActive ?? raiders.some(r => r.state === 'walking'));
+    setRaidActiveTimer(d.raidActiveTimer ?? 0);
+    setRaidBuildingsDestroyed(d.raidBuildingsDestroyed ?? 0);
+    setRaidCitizensKilled(d.raidCitizensKilled ?? 0);
+    if (window._setRaidersDefeatedAtWaveStart) window._setRaidersDefeatedAtWaveStart(gameState.raidersDefeated || 0);
+    if (raidActive && window.sendCitizensToHide) window.sendCitizensToHide();
     refreshUI();
     if (window.updateTimePauseUI) window.updateTimePauseUI();
     updateRaidHUD();

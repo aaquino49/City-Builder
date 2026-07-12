@@ -501,6 +501,9 @@ export class Citizen {
                 for (let dx = -15; dx <= 15; dx++) {
                     const nx = myTX + dx, ny = myTY + dy;
                     if (!grid.inBounds(nx, ny)) continue;
+                    // Spare trees orthogonally adjacent to the lumberyard — they
+                    // grant its adjacency bonus, which chopping would destroy.
+                    if (Math.abs(nx - this._workTX) + Math.abs(ny - this._workTY) === 1) continue;
                     const s = grid.structures[ny][nx];
                     if (s && s.def.key === 'obstacle_tree') {
                         const d = dx * dx + dy * dy; // squared distance — sufficient for nearest-node comparison, no sqrt
@@ -529,7 +532,10 @@ export class Citizen {
             this._phaseTimer += dtSec;
             if (this._phaseTimer >= 2.0) {
                 const s = grid.structures[this._nodeTY]?.[this._nodeTX];
-                if (s && s.def.key === 'obstacle_tree') grid.structures[this._nodeTY][this._nodeTX] = null;
+                if (s && s.def.key === 'obstacle_tree') {
+                    grid.structures[this._nodeTY][this._nodeTX] = null;
+                    window.patchStaticCache?.(this._nodeTX, this._nodeTY);
+                }
                 playChopSFX();
                 this._phase = 'returning';
                 this._setTargetTile(this._workTX, this._workTY, grid);
@@ -596,7 +602,10 @@ export class Citizen {
                 const s = grid.structures[this._nodeTY]?.[this._nodeTX];
                 if (s && s.def.key === nodeKey) {
                     s.hp = (s.hp ?? 5) - 1;
-                    if (s.hp <= 0) grid.structures[this._nodeTY][this._nodeTX] = null;
+                    if (s.hp <= 0) {
+                        grid.structures[this._nodeTY][this._nodeTX] = null;
+                        window.patchStaticCache?.(this._nodeTX, this._nodeTY);
+                    }
                 }
                 playClankSFX();
                 this._phase = 'returning';
@@ -1380,8 +1389,10 @@ export class Raider {
                 c._alive = false;
                 citizens.splice(idx, 1);
                 gameState.population = Math.max(0, gameState.population - 1);
-                raidCitizensKilled++;
-                _griefPenalty = Math.min(15, _griefPenalty + 5);
+                // Setters keep the module-scoped copies in state.js in sync
+                // (bare assignment only updated window.*, letting saves go stale)
+                window.setRaidCitizensKilled(raidCitizensKilled + 1);
+                window.setGriefPenalty(Math.min(15, _griefPenalty + 5));
                 const p = getPooledParticle();
                 p.x = c.x; p.y = c.y; p.type = 'puff'; p.timer = 0; p.duration = 0.4; p.alpha = 1.0;
                 particles.push(p);
@@ -1431,7 +1442,8 @@ export class Raider {
                                 grid.structures[cy][cx] = (dx === 0 && dy === 0) ? { def: RUBBLE_DEF, decayTimer: DAY_DURATION } : null;
                             }
                         }
-                        raidBuildingsDestroyed++;
+                        window.setRaidBuildingsDestroyed(raidBuildingsDestroyed + 1);
+                        window.patchStaticCache?.(parentTX, parentTY, w, h);
                         rebuildStructureLists();
                         if (window.markUIDirty) window.markUIDirty();
                         triggerShake(5);
