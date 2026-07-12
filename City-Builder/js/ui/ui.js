@@ -270,12 +270,17 @@ export class GameGrid {
             const drawX = typeof c.renderX === 'function' ? c.renderX() : c.x;
             const drawY = typeof c.renderY === 'function' ? c.renderY() : c.y;
             if (drawX < viewMinX || drawX > viewMaxX || drawY < viewMinY || drawY > viewMaxY) continue;
+            const rot = c.rotation || 0;
             if (c.job === 'rebel') {
                 // Red tint for rebels
                 ctx.globalAlpha = 0.85;
                 if (citizenAsset) {
                     ctx.globalCompositeOperation = 'source-over';
-                    ctx.drawImage(citizenAsset, drawX - 8, drawY - 8, 16, 16);
+                    ctx.save();
+                    ctx.translate(drawX, drawY);
+                    ctx.rotate(rot);
+                    ctx.drawImage(citizenAsset, -8, -8, 16, 16);
+                    ctx.restore();
                     ctx.fillStyle = 'rgba(200,30,30,0.55)';
                     ctx.beginPath(); ctx.arc(drawX, drawY, 8, 0, Math.PI * 2); ctx.fill();
                 } else {
@@ -284,7 +289,11 @@ export class GameGrid {
                 }
                 ctx.globalAlpha = 1.0;
             } else if (citizenAsset) {
-                ctx.drawImage(citizenAsset, drawX - 8, drawY - 8, 16, 16);
+                ctx.save();
+                ctx.translate(drawX, drawY);
+                ctx.rotate(rot);
+                ctx.drawImage(citizenAsset, -8, -8, 16, 16);
+                ctx.restore();
             } else {
                 ctx.fillStyle = '#ffdd57';
                 ctx.beginPath();
@@ -1390,7 +1399,11 @@ export function renderWorldOverlay() {
         if (!isVisibleUnit(sol)) continue;
         if (renderedSoldiers++ >= 120) break;
         if (soldierAsset) {
-            ctx.drawImage(soldierAsset, sol.x - 8, sol.y - 8, 16, 16);
+            ctx.save();
+            ctx.translate(sol.x, sol.y);
+            ctx.rotate(sol.rotation || 0);
+            ctx.drawImage(soldierAsset, -8, -8, 16, 16);
+            ctx.restore();
         } else {
             ctx.fillStyle = '#1a3a6a';
             ctx.beginPath(); ctx.arc(sol.x, sol.y, 6, 0, Math.PI * 2); ctx.fill();
@@ -1413,7 +1426,11 @@ export function renderWorldOverlay() {
         if (!isVisibleUnit(a)) continue;
         if (renderedArchers++ >= 80) break;
         if (archerAsset) {
-            ctx.drawImage(archerAsset, a.x - 8, a.y - 8, 16, 16);
+            ctx.save();
+            ctx.translate(a.x, a.y);
+            ctx.rotate(a.rotation || 0);
+            ctx.drawImage(archerAsset, -8, -8, 16, 16);
+            ctx.restore();
         } else {
             ctx.fillStyle = '#00ccaa';
             ctx.beginPath(); ctx.arc(a.x, a.y, 5, 0, Math.PI * 2); ctx.fill();
@@ -1433,7 +1450,11 @@ export function renderWorldOverlay() {
         if (!isVisibleUnit(k)) continue;
         if (renderedKnights++ >= 60) break;
         if (knightAsset) {
-            ctx.drawImage(knightAsset, k.x - 8, k.y - 8, 16, 16);
+            ctx.save();
+            ctx.translate(k.x, k.y);
+            ctx.rotate(k.rotation || 0);
+            ctx.drawImage(knightAsset, -8, -8, 16, 16);
+            ctx.restore();
         } else {
             ctx.fillStyle = '#cc8800';
             ctx.beginPath(); ctx.arc(k.x, k.y, 6, 0, Math.PI * 2); ctx.fill();
@@ -1510,7 +1531,11 @@ export function renderWorldOverlay() {
         ctx.save();
         ctx.globalAlpha = r._alpha;
         ctx.translate(r.x, r.y);
-        if (r._rotation) ctx.rotate(r._rotation);
+        // Directional facing (r.rotation) plus the victory-defeat spin effect
+        // (r._rotation, only nonzero while state === 'victory') stack together
+        // so a raider keeps its last heading while spinning out.
+        const _raiderRot = (r.rotation || 0) + (r._rotation || 0);
+        if (_raiderRot) ctx.rotate(_raiderRot);
         if (r._attacking) {
             const pulse = 0.45 + 0.55 * Math.abs(Math.sin(Date.now() / 120));
             ctx.strokeStyle = `rgba(255, 80, 0, ${pulse})`;

@@ -226,6 +226,75 @@ function testRegressionBugs() {
     results.militaryClamped = [...window.soldiers.slice(0, 3), ...window.archers.slice(0, 3), ...window.knights.slice(0, 3)]
         .every(unit => Math.hypot(unit.x - centerX, unit.y - centerY) <= maxR + 0.01);
 
+    // Task 3 regression: soldiers/knights must engage active raiders in BOTH
+    // combat modes — previously a raider present during 'defend' mode was
+    // completely ignored while the unit stood at its rally point.
+    {
+        window.raiders.length = 0;
+        window.setRaidActive(true);
+        window.setRaidPathBudget(1000);
+        const testRaider = new window.Raider(40 * TILE_SIZE, 40 * TILE_SIZE, 'normal');
+        window.raiders.push(testRaider);
+        const testSoldier = new window.Soldier(35 * TILE_SIZE, 35 * TILE_SIZE);
+        const testKnight = new window.Knight(35 * TILE_SIZE, 36 * TILE_SIZE);
+        window.soldiers.push(testSoldier);
+        window.knights.push(testKnight);
+        window.setCombatMode('defend');
+        const soldierDistBefore = Math.hypot(testSoldier.x - testRaider.x, testSoldier.y - testRaider.y);
+        const knightDistBefore = Math.hypot(testKnight.x - testRaider.x, testKnight.y - testRaider.y);
+        for (let i = 0; i < 5; i++) window.update(200);
+        const soldierDistAfter = Math.hypot(testSoldier.x - testRaider.x, testSoldier.y - testRaider.y);
+        const knightDistAfter = Math.hypot(testKnight.x - testRaider.x, testKnight.y - testRaider.y);
+        results.soldierEngagesInDefendMode = testSoldier._chaseTarget === testRaider || soldierDistAfter < soldierDistBefore - 1;
+        results.knightEngagesInDefendMode = testKnight._chaseTarget === testRaider || knightDistAfter < knightDistBefore - 1;
+        window.soldiers.pop(); window.knights.pop();
+        window.raiders.length = 0;
+        window.setRaidActive(false);
+    }
+
+    // Task 1 regression: units spawned exactly on top of each other (the
+    // reported stacking bug) must visibly separate rather than staying glued.
+    {
+        // Clear the test tile of any randomly-generated tree/stone/iron obstacle
+        // so the test is deterministic regardless of world-gen RNG.
+        if (window.grid.inBounds(20, 20)) window.grid.structures[20][20] = null;
+        const stackX = 20 * TILE_SIZE + TILE_SIZE / 2, stackY = 20 * TILE_SIZE + TILE_SIZE / 2;
+        const stack = [];
+        for (let i = 0; i < 5; i++) {
+            const c = new window.Citizen(stackX, stackY);
+            c.job = 'idle'; c.state = 'idle';
+            window.citizens.push(c);
+            stack.push(c);
+        }
+        for (let i = 0; i < 20; i++) {
+            window.rebuildSeparationGrid();
+            for (const c of stack) c.update(16, window.grid);
+        }
+        let anyOverlap = false;
+        for (let i = 0; i < stack.length; i++) {
+            for (let j = i + 1; j < stack.length; j++) {
+                if (Math.hypot(stack[i].x - stack[j].x, stack[i].y - stack[j].y) < 1) anyOverlap = true;
+            }
+        }
+        results.separationPreventsStacking = !anyOverlap;
+        for (const c of stack) {
+            const idx = window.citizens.indexOf(c);
+            if (idx !== -1) window.citizens.splice(idx, 1);
+        }
+    }
+
+    // Task 2 regression: a unit walking a known direction (due east) must
+    // rotate to face that direction rather than staying at rotation 0.
+    {
+        if (window.grid.inBounds(10, 10)) window.grid.structures[10][10] = null;
+        if (window.grid.inBounds(11, 10)) window.grid.structures[10][11] = null;
+        const facer = new window.Citizen(10 * TILE_SIZE + TILE_SIZE / 2, 10 * TILE_SIZE + TILE_SIZE / 2);
+        facer.job = 'idle';
+        facer._directWalkToTile(11, 10, window.grid); // due east
+        for (let i = 0; i < 10; i++) facer.update(16, window.grid);
+        results.unitRotatesToFaceMovement = Math.abs(facer.rotation) > 0.05;
+    }
+
     // Raid timing: expiring the timer at night enters a 30s scout warning
     // (not an instant spawn); the wave spawns when the scout timer runs out.
     window.raiders.length = 0;
@@ -406,7 +475,7 @@ async function bootQaHarness() {
 }
 
 if (QA_ENABLED) {
-    bootQaHarness().then(() => {
+    bootQaHarness().then(async () => {
         // ?qa=auto runs the synchronous checks unattended and logs the result —
         // lets a headless browser act as a CI smoke check. (Frame/movement
         // sampling needs real rAF time, so it stays interactive-only.)
@@ -427,6 +496,51 @@ if (QA_ENABLED) {
             try {
                 const simSec = Number(new URLSearchParams(window.location.search).get('simSec')) || 400;
                 console.log('[QA SIM] ' + JSON.stringify(simulateTimeline(simSec)));
+            } catch (err) {
+                console.error('[QA ERROR] ' + err.message + '\n' + err.stack);
+            }
+        }
+        // ?qa=shot — stack a small cluster of units on one tile and let them
+        // separate + orient, for visual screenshot inspection (no assertions).
+        if (new URLSearchParams(window.location.search).get('qa') === 'shot') {
+            try {
+                window.gameState.started = true;
+                window.setGameIsPaused(false);
+                window.setUserPaused(false);
+                const start = document.getElementById('start-screen');
+                if (start) start.style.display = 'none';
+                const { TILE_SIZE } = window;
+                const cx = 32 * TILE_SIZE + TILE_SIZE / 2, cy = 32 * TILE_SIZE + TILE_SIZE / 2;
+                for (let i = 0; i < 6; i++) window.citizens.push(new window.Citizen(cx, cy));
+                for (let i = 0; i < 4; i++) window.soldiers.push(new window.Soldier(cx + 40, cy));
+                for (let i = 0; i < 3; i++) window.archers.push(new window.Archer(cx - 40, cy));
+                for (let i = 0; i < 3; i++) window.knights.push(new window.Knight(cx, cy + 40));
+                // Frame the cluster in the open upper-left canvas area, clear of
+                // the docked BUILD panel (right) and bottom HUD bar.
+                window.camera.zoom = 4.0;
+                window.camera.x = cx - 300 / window.camera.zoom;
+                window.camera.y = cy - 300 / window.camera.zoom;
+                for (let i = 0; i < 40; i++) window.update(16);
+            } catch (err) {
+                console.error('[QA ERROR] ' + err.message + '\n' + err.stack);
+            }
+        }
+        // ?qa=perf — stress-seed 400+ units and time synchronous update() calls
+        // directly (rAF doesn't reliably fire in headless-mode virtual time, so
+        // this avoids that dependency) to catch perf regressions from the new
+        // per-frame separation/rotation work.
+        if (new URLSearchParams(window.location.search).get('qa') === 'perf') {
+            try {
+                const seeded = seedLargeCity();
+                // Browser timer resolution is coarsened (security), so individual
+                // sub-ms update() calls round to 0 — batch many calls and time the
+                // whole run instead, which averages that noise out.
+                const N = 3000;
+                const t0 = performance.now();
+                for (let i = 0; i < N; i++) window.update(16);
+                const totalMs = performance.now() - t0;
+                const perf = { totalMs: +totalMs.toFixed(1), avgMsPerUpdate: +(totalMs / N).toFixed(4) };
+                console.log('[QA PERF] ' + JSON.stringify({ seeded, perf }));
             } catch (err) {
                 console.error('[QA ERROR] ' + err.message + '\n' + err.stack);
             }

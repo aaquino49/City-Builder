@@ -1147,6 +1147,10 @@ function update(dtMs) {
     }
 
     setRaidPathBudget(15);
+    // Rebuild the anti-stacking spatial hash once per frame (coarse bucket grid
+    // over citizens/soldiers/archers/knights/raiders) so every unit's per-frame
+    // separation check is a handful of bucket lookups instead of an O(n²) scan.
+    rebuildSeparationGrid();
     // Refill the shared active-raiders scratch list in place (no allocation) — reused by
     // soldiers, archers, knights, gates.
     _activeRaiders.length = 0;

@@ -158,6 +158,9 @@ function _moveUnitAlongPath(unit, dtSec, grid, speed, idleWaitMin = 0.5, idleWai
     const t = Math.min(1.0, unit._moveTimer / unit.speed);
     unit.x = unit._moveFromX + (unit.targetX - unit._moveFromX) * t;
     unit.y = unit._moveFromY + (unit.targetY - unit._moveFromY) * t;
+    // Face the whole-segment direction (stable for the tween's duration) rather
+    // than deriving it frame-to-frame, which would jitter with the tween easing.
+    _updateFacing(unit, unit.targetX - unit._moveFromX, unit.targetY - unit._moveFromY, dtSec);
     if (t < 1.0) return;
     unit.x = unit.targetX;
     unit.y = unit.targetY;
@@ -172,6 +175,101 @@ const _archerDefenseContext = {
     postCounts: new Map(),
 };
 
+// ===================== ROTATION (DIRECTIONAL FACING) =====================
+const TWO_PI = Math.PI * 2;
+// Angle (atan2 convention) that unit art faces at rotation=0. Most top-down
+// character sprites idle facing the camera ("south"), which is +PI/2 in
+// atan2(dy,dx) terms. If your sprite sheet instead faces up/right by default,
+// this is the one constant to flip (-PI/2 for "faces up", 0 for "faces right").
+const FACING_REST_ANGLE = Math.PI / 2;
+
+// Shortest-path angle interpolation — avoids spinning the long way around
+// when crossing the -PI/PI wraparound boundary.
+function _lerpAngle(from, to, t) {
+    let diff = (to - from) % TWO_PI;
+    if (diff > Math.PI) diff -= TWO_PI;
+    else if (diff < -Math.PI) diff += TWO_PI;
+    return from + diff * t;
+}
+
+// Smoothly turns unit.rotation to face travel direction (dx, dy). Call once
+// per frame with the current movement delta; no-ops when nearly stationary
+// so units keep their last facing instead of snapping to 0 at rest.
+function _updateFacing(unit, dx, dy, dtSec, turnRate = 10) {
+    if (dx * dx + dy * dy < 0.0001) return;
+    const target = Math.atan2(dy, dx) - FACING_REST_ANGLE;
+    unit.rotation = _lerpAngle(unit.rotation ?? 0, target, Math.min(1, dtSec * turnRate));
+}
+
+// ===================== SEPARATION (ANTI-STACKING) =====================
+// Units walk to exact tile centers, so several of them converging on the same
+// farm/rally point/gate stack into a single visible sprite. A full pairwise
+// check across every unit is O(n²); instead we bucket all units into a coarse
+// spatial hash once per frame (rebuildSeparationGrid, called from main.js's
+// update loop) and each unit only tests its own + 8 neighboring cells.
+const SEPARATION_CELL = 24;   // px per bucket — a bit larger than the push radius
+const SEPARATION_RADIUS = 11; // px — units nearer than this get nudged apart
+const SEPARATION_RADIUS_SQ = SEPARATION_RADIUS * SEPARATION_RADIUS;
+const _sepBuckets = new Map();
+
+function rebuildSeparationGrid() {
+    _sepBuckets.clear();
+    for (const list of [citizens, soldiers, archers, knights, raiders]) {
+        for (const u of list) {
+            if (u.state === 'dead' || u.state === 'victory' || u.state === 'defeat') continue;
+            const key = (u.x / SEPARATION_CELL | 0) + ',' + (u.y / SEPARATION_CELL | 0);
+            let bucket = _sepBuckets.get(key);
+            if (!bucket) { bucket = []; _sepBuckets.set(key, bucket); }
+            bucket.push(u);
+        }
+    }
+}
+
+// Nudges `unit` away from anything within SEPARATION_RADIUS, then rejects the
+// nudge if it would land on a non-walkable tile (wall/obstacle/off-territory)
+// so units never get pushed through terrain to de-stack.
+function applySeparation(unit, dtSec, walkableFn = isFriendlyWalkable, pushStrength = 46) {
+    const cx = unit.x / SEPARATION_CELL | 0;
+    const cy = unit.y / SEPARATION_CELL | 0;
+    let pushX = 0, pushY = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+            const bucket = _sepBuckets.get((cx + dx) + ',' + (cy + dy));
+            if (!bucket) continue;
+            for (let i = 0; i < bucket.length; i++) {
+                const other = bucket[i];
+                if (other === unit) continue;
+                const ox = unit.x - other.x, oy = unit.y - other.y;
+                const dSq = ox * ox + oy * oy;
+                if (dSq >= SEPARATION_RADIUS_SQ) continue;
+                if (dSq < 0.01) {
+                    // Exact overlap (the original stacking bug — units share x,y
+                    // pixel-for-pixel). A position-derived angle would collapse to
+                    // the SAME value for every unit in the pile since they're all
+                    // at the same position, so the whole stack would drift together
+                    // forever instead of separating. Use a stable per-instance
+                    // random seed instead — every unit gets its own fixed nudge
+                    // direction the moment it first needs one.
+                    const a = unit._sepSeed ?? (unit._sepSeed = Math.random() * TWO_PI);
+                    pushX += Math.cos(a); pushY += Math.sin(a);
+                    continue;
+                }
+                const d = Math.sqrt(dSq);
+                const overlap = (SEPARATION_RADIUS - d) / SEPARATION_RADIUS;
+                pushX += (ox / d) * overlap;
+                pushY += (oy / d) * overlap;
+            }
+        }
+    }
+    if (pushX === 0 && pushY === 0) return;
+    const nx = unit.x + pushX * pushStrength * dtSec;
+    const ny = unit.y + pushY * pushStrength * dtSec;
+    if (walkableFn(nx / TILE_SIZE | 0, ny / TILE_SIZE | 0)) {
+        unit.x = nx;
+        unit.y = ny;
+    }
+}
+
 // ===================== CITIZENS =====================
 export class Citizen {
     constructor(x, y) {
@@ -180,6 +278,7 @@ export class Citizen {
         this.targetX = x;
         this.targetY = y;
         this.speed = 1.5;
+        this.rotation = 0;
         this.state = 'idle';
         this._idleTimer = 0;
         this._idleWait = this._randomIdleWait();
@@ -389,21 +488,27 @@ export class Citizen {
     update(dt, grid) {
         const dtSec = dt / 1000;
         this._updateVisualMotion(dtSec);
+        // Hiding citizens are intentionally clustered inside a house during a
+        // raid — leave them stacked rather than nudging them into view.
+        const canSeparate = this.job !== 'hiding';
         if (this.state === 'walking') {
             this._moveTimer += dtSec;
             const _sm = SEASON_MODIFIERS[SEASONS.indexOf(gameState.season)];
             const t = Math.min(1.0, this._moveTimer / (this.speed / _sm.citizenSpeedMult));
             this.x = this._moveFromX + (this.targetX - this._moveFromX) * t;
             this.y = this._moveFromY + (this.targetY - this._moveFromY) * t;
+            _updateFacing(this, this.targetX - this._moveFromX, this.targetY - this._moveFromY, dtSec);
             if (t >= 1.0) {
                 this.x = this.targetX;
                 this.y = this.targetY;
                 this._advancePath(grid); // next waypoint or become idle
             }
+            if (canSeparate) applySeparation(this, dtSec, isFriendlyWalkable);
             return;
         }
         if (this.job !== 'idle') {
             this._updateJob(dtSec, grid);
+            if (canSeparate) applySeparation(this, dtSec, isFriendlyWalkable);
             return;
         }
         this._idleTimer += dtSec;
@@ -412,6 +517,7 @@ export class Citizen {
             this._idleWait = this._randomIdleWait();
             if (!this._tryAmbientWalk(grid)) this._pickTarget(grid);
         }
+        if (canSeparate) applySeparation(this, dtSec, isFriendlyWalkable);
     }
 
     _updateJob(dtSec, grid) {
@@ -712,6 +818,7 @@ export class Soldier {
         this.targetX = x;
         this.targetY = y;
         this.speed = 1.5;
+        this.rotation = 0;
         this._moveFromX = x;
         this._moveFromY = y;
         this._moveTimer = 0;
@@ -788,7 +895,11 @@ export class Soldier {
 
     update(dtSec, grid, activeRaiders) {
         _clampToTerritory(this);
-        if (activeRaiders.length > 0 && _combatMode === 'attack') {
+        // Soldiers engage any active raiders regardless of the attack/defend
+        // toggle — _combatMode now only decides where they patrol/rally when
+        // there's nothing to fight (see the idle branch below). _clampToTerritory
+        // still bounds the chase in both modes, same as before.
+        if (activeRaiders.length > 0) {
             let closest = null, closestDistSq = Infinity;
             for (const r of activeRaiders) {
                 const dx = r.x - this.x, dy = r.y - this.y;
@@ -813,15 +924,20 @@ export class Soldier {
                     const wpX = tx * TILE_SIZE + TILE_SIZE / 2, wpY = ty * TILE_SIZE + TILE_SIZE / 2;
                     const d = Math.hypot(wpX - this.x, wpY - this.y);
                     const spd = TILE_SIZE * 1.5 * dtSec;
+                    _updateFacing(this, wpX - this.x, wpY - this.y, dtSec);
                     if (d <= spd) { this.x = wpX; this.y = wpY; this._chaseIndex++; }
                     else { this.x += (wpX - this.x) / d * spd; this.y += (wpY - this.y) / d * spd; }
+                    applySeparation(this, dtSec, isFriendlyWalkable);
                     _clampToTerritory(this);
+                } else {
+                    // Standing at the final waypoint (e.g. melee range) — still
+                    // face the target so units don't stare off at an old heading.
+                    _updateFacing(this, closest.x - this.x, closest.y - this.y, dtSec);
                 }
             }
             return;
         }
         this._chasePath = []; this._chaseIndex = 0; this._chaseTarget = null;
-        if (activeRaiders.length > 0 && _combatMode === 'defend') _clampToTerritory(this);
         this.hp = Math.min(this.maxHp, this.hp + (gameState.upgrades?.field_medicine ? 6 : 3) * dtSec); // heal out of combat
         if (this.state === 'idle') {
             this._idleTimer += dtSec;
@@ -833,6 +949,7 @@ export class Soldier {
         } else {
             _moveUnitAlongPath(this, dtSec, grid, 1.5);
         }
+        applySeparation(this, dtSec, isFriendlyWalkable);
         _clampToTerritory(this);
     }
 }
@@ -843,6 +960,7 @@ export class Archer {
         this.x = x; this.y = y;
         this.targetX = x; this.targetY = y;
         this.hp = 80; this.maxHp = 80;
+        this.rotation = 0;
         this._moveFromX = x; this._moveFromY = y;
         this._moveTimer = 0; this.speed = 1.5;
         this.state = 'seeking_post';
@@ -912,8 +1030,10 @@ export class Archer {
                     this._fireTimer = 1.5;
                     const dmg = gameState.upgrades?.steel_bows ? 25 : 20;
                     fireArrow(this.x, this.y, closest, dmg);
+                    _updateFacing(this, closest.x - this.x, closest.y - this.y, dtSec);
                 }
             }
+            applySeparation(this, dtSec, isFriendlyWalkable);
             _clampToTerritory(this);
             return;
         }
@@ -933,6 +1053,7 @@ export class Archer {
                 this._moveFromX = this.x; this._moveFromY = this.y;
                 this._moveTimer = 0;
                 this.state = 'moving_to_post';
+                applySeparation(this, dtSec, isFriendlyWalkable);
                 _clampToTerritory(this);
                 return;
             }
@@ -1016,9 +1137,11 @@ export class Archer {
                     this._fireTimer = 1.5;
                     const dmg = gameState.upgrades?.steel_bows ? 25 : 20;
                     fireArrow(px, py, closest, dmg);
+                    _updateFacing(this, closest.x - px, closest.y - py, dtSec);
                 }
             }
         }
+        applySeparation(this, dtSec, isFriendlyWalkable);
         _clampToTerritory(this);
     }
 }
@@ -1030,6 +1153,7 @@ export class Knight {
         this.maxHp = (gameState.upgrades && gameState.upgrades.heavy_armor) ? 200 : 150;
         this.hp = this.maxHp;
         this.speed = 1.2;
+        this.rotation = 0;
         this.targetX = x; this.targetY = y;
         this._moveFromX = x; this._moveFromY = y;
         this._moveTimer = 0;
@@ -1046,7 +1170,11 @@ export class Knight {
 
     update(dtSec, grid, activeRaiders) {
         _clampToTerritory(this);
-        if (activeRaiders.length > 0 && _combatMode === 'attack') {
+        // Knights engage any active raiders regardless of the attack/defend
+        // toggle — _combatMode now only decides where they patrol/rally when
+        // there's nothing to fight (see the idle branch below). _clampToTerritory
+        // still bounds the chase in both modes, same as before.
+        if (activeRaiders.length > 0) {
             let closest = null, cdSq = Infinity;
             for (const r of activeRaiders) {
                 const dx = r.x - this.x, dy = r.y - this.y;
@@ -1071,15 +1199,18 @@ export class Knight {
                     const wpX = tx * TILE_SIZE + TILE_SIZE / 2, wpY = ty * TILE_SIZE + TILE_SIZE / 2;
                     const d = Math.hypot(wpX - this.x, wpY - this.y);
                     const spd = TILE_SIZE * 1.2 * dtSec;
+                    _updateFacing(this, wpX - this.x, wpY - this.y, dtSec);
                     if (d <= spd) { this.x = wpX; this.y = wpY; this._chaseIndex++; }
                     else { this.x += (wpX - this.x) / d * spd; this.y += (wpY - this.y) / d * spd; }
+                    applySeparation(this, dtSec, isFriendlyWalkable);
                     _clampToTerritory(this);
+                } else {
+                    _updateFacing(this, closest.x - this.x, closest.y - this.y, dtSec);
                 }
             }
             return;
         }
         this._chasePath = []; this._chaseIndex = 0; this._chaseTarget = null;
-        if (activeRaiders.length > 0 && _combatMode === 'defend') _clampToTerritory(this);
         this.hp = Math.min(this.maxHp, this.hp + (gameState.upgrades?.field_medicine ? 6 : 3) * dtSec); // heal out of combat
         if (this.state === 'idle') {
             this._idleTimer += dtSec;
@@ -1120,6 +1251,7 @@ export class Knight {
         } else {
             _moveUnitAlongPath(this, dtSec, grid, 1.2);
         }
+        applySeparation(this, dtSec, isFriendlyWalkable);
         _clampToTerritory(this);
     }
 }
@@ -1182,7 +1314,8 @@ export class Raider {
         this.state = 'walking';
         this.hp = type === 'siege' ? 150 : 100;
         this._alpha = 1.0;
-        this._rotation = 0;
+        this._rotation = 0; // victory-spin animation (main.js updateEffects) — do not repurpose
+        this.rotation = 0;  // directional facing while walking (this file)
         this._victoryTimer = 0;
         this._defeatTimer = 0;
         this._defeatFromX = x; this._defeatFromY = y;
@@ -1465,6 +1598,15 @@ export class Raider {
         if (this._repathTimer > 0) { this._repathTimer -= dtSec; return; }
 
         if (this._attacking) {
+            // Face whatever is being hit rather than staring off at the old
+            // approach heading for the whole attack duration.
+            if (this._target?.type === 'citizen') {
+                _updateFacing(this, this._target.citizen.x - this.x, this._target.citizen.y - this.y, dtSec);
+            } else if (this._target?.type === 'building') {
+                _updateFacing(this, this._target.tx * TILE_SIZE + TILE_SIZE / 2 - this.x,
+                                     this._target.ty * TILE_SIZE + TILE_SIZE / 2 - this.y, dtSec);
+            }
+            applySeparation(this, dtSec, isRaiderWalkable);
             this._attackTimer += dtSec;
             if (this._attackTimer >= this._attackDuration) this._completeAttack();
             return;
@@ -1476,6 +1618,7 @@ export class Raider {
             const ddx = this.x - cx, ddy = this.y - cy;
             const dist = Math.hypot(ddx, ddy) || 1;
             const spd = TILE_SIZE / this._moveDuration;
+            _updateFacing(this, ddx, ddy, dtSec);
             this.x += (ddx / dist) * spd * dtSec;
             this.y += (ddy / dist) * spd * dtSec;
             const W = grid.width * TILE_SIZE, H = grid.height * TILE_SIZE;
@@ -1501,6 +1644,8 @@ export class Raider {
             const t = Math.min(1.0, this._moveTimer / this._moveDuration);
             this.x = this._moveFromX + (this.targetX - this._moveFromX) * t;
             this.y = this._moveFromY + (this.targetY - this._moveFromY) * t;
+            _updateFacing(this, this.targetX - this._moveFromX, this.targetY - this._moveFromY, dtSec);
+            applySeparation(this, dtSec, isRaiderWalkable);
             if (t >= 1.0) {
                 this.x = this.targetX;
                 this.y = this.targetY;
@@ -1537,5 +1682,6 @@ export class Raider {
 
 // Bind to window for global legacy namespace access
 Object.assign(window, {
-    Citizen, Soldier, Archer, Knight, MerchantNPC, Raider, _archerDefenseContext
+    Citizen, Soldier, Archer, Knight, MerchantNPC, Raider, _archerDefenseContext,
+    rebuildSeparationGrid
 });
