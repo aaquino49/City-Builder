@@ -268,6 +268,39 @@ function testRegressionBugs() {
         sim.raidActive = false;
     }
 
+    // Defend-mode archers should man gate approaches while idle, then favor the
+    // wall segment nearest an approaching enemy instead of holding a stale post.
+    {
+        const postDefs = [
+            { tx: 26, ty: 24, def: BUILDINGS.wall },
+            { tx: 27, ty: 24, def: BUILDINGS.wall },
+            { tx: 28, ty: 24, def: BUILDINGS.gate },
+            { tx: 29, ty: 24, def: BUILDINGS.wall },
+            { tx: 30, ty: 24, def: BUILDINGS.wall },
+        ];
+        const previous = postDefs.map(({ tx, ty }) => sim.grid.structures[ty][tx]);
+        postDefs.forEach(({ tx, ty, def }) => {
+            sim.grid.structures[ty][tx] = { def, ...(def === BUILDINGS.gate ? { gateOpen: true } : {}) };
+        });
+        window.rebuildStructureLists();
+        sim.raidPathBudget = 1000;
+        const defender = new window.Archer(28.5 * TILE_SIZE, 30.5 * TILE_SIZE);
+        defender._searchTimer = 1;
+        defender.update(0.01, sim.grid, []);
+        results.archersGuardGateApproaches = defender._postTY === 24 && Math.abs(defender._postTX - 28) <= 1;
+
+        defender._postTX = -1; defender._postTY = -1;
+        defender._postStandTX = -1; defender._postStandTY = -1;
+        defender.state = 'seeking_post'; defender._searchTimer = 1;
+        defender._path = []; defender._pathIndex = 0;
+        const westThreat = { x: 25.5 * TILE_SIZE, y: 20.5 * TILE_SIZE };
+        defender.update(0.01, sim.grid, [westThreat]);
+        results.archersFaceNearestThreat = defender._postTY === 24 && defender._postTX <= 27;
+
+        postDefs.forEach(({ tx, ty }, index) => { sim.grid.structures[ty][tx] = previous[index]; });
+        window.rebuildStructureLists();
+    }
+
     // Difficulty must actually change raid sizes (raidStrength was previously
     // saved/migrated but never read — Settler and Iron Crown played identically).
     {

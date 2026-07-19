@@ -72,54 +72,45 @@ function _getDefendRallyTile() {
 }
 
 function _findProtectedWallPost(unit, activeRaiders) {
-    const walls = [...sim.activeWalls, ...sim.activeGates];
-    if (walls.length === 0) return null;
+    const posts = [...sim.activeWalls, ...sim.activeTowers, ...sim.activeGates];
+    if (posts.length === 0) return null;
     const ux = Math.floor(unit.x / TILE_SIZE);
     const uy = Math.floor(unit.y / TILE_SIZE);
-    let nearestRaiderTX = -1;
-    let nearestRaiderTY = -1;
-    let nearestRaider = null;
-    let bestRaiderDist = Infinity;
-    for (const r of activeRaiders) {
-        const rtx = Math.floor(r.x / TILE_SIZE);
-        const rty = Math.floor(r.y / TILE_SIZE);
-        const dx = rtx - ux;
-        const dy = rty - uy;
-        const dSq = dx * dx + dy * dy;
-        if (dSq < bestRaiderDist) {
-            bestRaiderDist = dSq;
-            nearestRaider = r;
-            nearestRaiderTX = rtx;
-            nearestRaiderTY = rty;
-        }
-    }
+    _refreshArcherDefenseThreats(activeRaiders);
     let best = null;
     let bestScore = Infinity;
-    for (const { tx, ty } of walls) {
-        let wallRaiderDist = 0;
-        if (nearestRaider) {
-            const wdx = tx - nearestRaiderTX;
-            const wdy = ty - nearestRaiderTY;
-            wallRaiderDist = wdx * wdx + wdy * wdy;
-        }
+    for (const { tx, ty } of posts) {
+        const postKey = tx + ',' + ty;
+        const focus = _archerDefenseContext.postFocus.get(postKey) || {
+            nearestRaiderTX: -1,
+            nearestRaiderTY: -1,
+            postRaiderDist: Infinity,
+            postGateDist: Infinity,
+        };
+        const { nearestRaiderTX, nearestRaiderTY, postRaiderDist, postGateDist } = focus;
         for (const { dx, dy } of [{dx:0,dy:-1},{dx:0,dy:1},{dx:-1,dy:0},{dx:1,dy:0}]) {
             const standTX = tx + dx;
             const standTY = ty + dy;
             if (!isFriendlyWalkable(standTX, standTY) || !_isInTerritory(standTX, standTY, 0)) continue;
             let protectionPenalty = 0;
-            let raiderScore = 0;
-            if (nearestRaider) {
+            if (nearestRaiderTX !== -1) {
                 const sdx = standTX - nearestRaiderTX;
                 const sdy = standTY - nearestRaiderTY;
-                raiderScore = (tx - nearestRaiderTX) * (tx - nearestRaiderTX) + (ty - nearestRaiderTY) * (ty - nearestRaiderTY);
                 const standRaiderDist = sdx * sdx + sdy * sdy;
-                if (standRaiderDist <= wallRaiderDist) protectionPenalty = 100000;
+                if (standRaiderDist <= postRaiderDist) protectionPenalty = 100000;
             }
             const selfDX = standTX - ux;
             const selfDY = standTY - uy;
-            const postKey = tx + ',' + ty;
-            const postCount = _archerDefenseContext.postCounts.get(postKey) || 0;
-            const score = protectionPenalty + raiderScore * 1000 + selfDX * selfDX + selfDY * selfDY + postCount * 50000;
+            const isCurrentPost = unit._postTX === tx && unit._postTY === ty;
+            const postCount = Math.max(0, (_archerDefenseContext.postCounts.get(postKey) || 0) - (isCurrentPost ? 1 : 0));
+            // During a raid, face the nearest live threat. In peacetime, cluster
+            // along gate approaches instead of occupying arbitrary remote walls.
+            const focusScore = nearestRaiderTX !== -1
+                ? postRaiderDist
+                : (postGateDist < Infinity ? postGateDist : 0);
+            const gateTieBreaker = nearestRaiderTX !== -1 && postGateDist < Infinity ? postGateDist * 10 : 0;
+            const score = protectionPenalty + focusScore * 1000 + gateTieBreaker
+                + selfDX * selfDX + selfDY * selfDY + postCount * 50000;
             if (score < bestScore) {
                 bestScore = score;
                 best = { tx, ty, standTX, standTY };
@@ -127,6 +118,22 @@ function _findProtectedWallPost(unit, activeRaiders) {
         }
     }
     return best;
+}
+
+function _sendArcherToPost(archer, post, grid) {
+    archer._postTX = post.tx;
+    archer._postTY = post.ty;
+    archer._postStandTX = post.standTX;
+    archer._postStandTY = post.standTY;
+    const startTX = Math.floor(archer.x / TILE_SIZE);
+    const startTY = Math.floor(archer.y / TILE_SIZE);
+    const path = aStarPath(startTX, startTY, post.standTX, post.standTY, isFriendlyWalkable);
+    archer._path = path && path.length > 0 ? path : [];
+    archer._pathIndex = 0;
+    archer._moveFromX = archer.x;
+    archer._moveFromY = archer.y;
+    archer._moveTimer = 0;
+    archer.state = 'moving_to_post';
 }
 
 function _assignUnitPath(unit, path, grid, speed, stateName) {
@@ -175,7 +182,57 @@ function _moveUnitAlongPath(unit, dtSec, grid, speed, idleWaitMin = 0.5, idleWai
 
 const _archerDefenseContext = {
     postCounts: new Map(),
+    postFocus: new Map(),
+    threatSource: null,
+    threatCount: -1,
+    wallsSource: null,
+    towersSource: null,
+    gatesSource: null,
 };
+
+function _refreshArcherDefenseThreats(activeRaiders) {
+    if (_archerDefenseContext.threatSource === activeRaiders
+        && _archerDefenseContext.threatCount === activeRaiders.length
+        && _archerDefenseContext.wallsSource === sim.activeWalls
+        && _archerDefenseContext.towersSource === sim.activeTowers
+        && _archerDefenseContext.gatesSource === sim.activeGates) return;
+    _archerDefenseContext.threatSource = activeRaiders;
+    _archerDefenseContext.threatCount = activeRaiders.length;
+    _archerDefenseContext.wallsSource = sim.activeWalls;
+    _archerDefenseContext.towersSource = sim.activeTowers;
+    _archerDefenseContext.gatesSource = sim.activeGates;
+    _archerDefenseContext.postFocus.clear();
+    const posts = [...sim.activeWalls, ...sim.activeTowers, ...sim.activeGates];
+    for (const { tx, ty } of posts) {
+        let nearestRaiderTX = -1;
+        let nearestRaiderTY = -1;
+        let postRaiderDist = Infinity;
+        for (const r of activeRaiders) {
+            const rtx = Math.floor(r.x / TILE_SIZE);
+            const rty = Math.floor(r.y / TILE_SIZE);
+            const rdx = tx - rtx;
+            const rdy = ty - rty;
+            const dSq = rdx * rdx + rdy * rdy;
+            if (dSq < postRaiderDist) {
+                postRaiderDist = dSq;
+                nearestRaiderTX = rtx;
+                nearestRaiderTY = rty;
+            }
+        }
+        let postGateDist = Infinity;
+        for (const gate of sim.activeGates) {
+            const gdx = tx - gate.tx;
+            const gdy = ty - gate.ty;
+            postGateDist = Math.min(postGateDist, gdx * gdx + gdy * gdy);
+        }
+        _archerDefenseContext.postFocus.set(`${tx},${ty}`, {
+            nearestRaiderTX,
+            nearestRaiderTY,
+            postRaiderDist,
+            postGateDist,
+        });
+    }
+}
 
 const TWO_PI = Math.PI * 2;
 
@@ -1052,11 +1109,12 @@ export class Archer {
         this._path = [];
         this._pathIndex = 0;
         this._followPathTimer = 0;
+        this._lastDefenseHadThreats = false;
     }
 
     update(dtSec, grid, activeRaiders) {
         _clampToTerritory(this);
-        // Mode-sync: switch state when _combatMode changes
+        // Mode-sync: switch state when combat mode changes.
         if (sim.combatMode === 'attack' && (this._postTX !== -1 || this.state === 'seeking_post' || this.state === 'at_post')) {
             this._postTX = -1; this._postTY = -1;
             this._postStandTX = -1; this._postStandTY = -1;
@@ -1123,18 +1181,10 @@ export class Archer {
             this._searchTimer += dtSec;
             if (this._searchTimer < 1.0) return;
             this._searchTimer = 0;
+            this._lastDefenseHadThreats = activeRaiders.length > 0;
             const protectedPost = _findProtectedWallPost(this, activeRaiders);
             if (protectedPost) {
-                const { tx: bx, ty: by, standTX, standTY } = protectedPost;
-                this._postTX = bx; this._postTY = by;
-                this._postStandTX = standTX; this._postStandTY = standTY;
-                const aSX = Math.floor(this.x / TILE_SIZE), aSY = Math.floor(this.y / TILE_SIZE);
-                const ap = aStarPath(aSX, aSY, standTX, standTY, isFriendlyWalkable);
-                this._path = (ap && ap.length > 0) ? ap : [];
-                this._pathIndex = 0;
-                this._moveFromX = this.x; this._moveFromY = this.y;
-                this._moveTimer = 0;
-                this.state = 'moving_to_post';
+                _sendArcherToPost(this, protectedPost, grid);
                 applySeparation(this, dtSec, isFriendlyWalkable);
                 _clampToTerritory(this);
                 return;
@@ -1203,6 +1253,18 @@ export class Archer {
                 this.state = this._postTX === -1 ? 'following' : 'at_post';
             }
         } else if (this.state === 'at_post') {
+            const hasThreats = activeRaiders.length > 0;
+            const threatStateChanged = hasThreats !== this._lastDefenseHadThreats;
+            if (threatStateChanged) {
+                this._lastDefenseHadThreats = hasThreats;
+                const betterPost = _findProtectedWallPost(this, activeRaiders);
+                if (betterPost && (betterPost.tx !== this._postTX || betterPost.ty !== this._postTY)) {
+                    _sendArcherToPost(this, betterPost, grid);
+                    applySeparation(this, dtSec, isFriendlyWalkable);
+                    _clampToTerritory(this);
+                    return;
+                }
+            }
             this.hp = Math.min(this.maxHp, this.hp + (gameState.upgrades?.field_medicine ? 4 : 2) * dtSec); // heal at post
             this._fireTimer = Math.max(0, this._fireTimer - dtSec);
             if (this._fireTimer <= 0 && activeRaiders.length > 0) {
