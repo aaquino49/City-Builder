@@ -18,6 +18,11 @@ function _isInTerritory(tx, ty, pad = 1) {
     return Math.hypot(tx - 32, ty - 32) <= sim.currentTerritoryRadius + pad;
 }
 
+function _isUnitInTerritory(unit) {
+    const cx = 32.5 * TILE_SIZE, cy = 32.5 * TILE_SIZE;
+    return Math.hypot(unit.x - cx, unit.y - cy) <= (sim.currentTerritoryRadius + 1) * TILE_SIZE;
+}
+
 function _getNearestOpenNeighbor(tx, ty, walkableFn = isFriendlyWalkable) {
     let best = null;
     let bestDist = Infinity;
@@ -306,6 +311,61 @@ function _marchOnCamp(unit, dtSec, grid, speedTiles) {
         unit.y += (camp.y - unit.y) / d * spd;
     }
     applySeparation(unit, dtSec, isFriendlyWalkable);
+}
+
+// When the final camp falls, assaulting units may be far beyond the territory
+// boundary. Dropping _assaulting immediately lets _clampToTerritory teleport
+// them home on the next frame, which looks like an extreme speed burst. March
+// them back at their normal movement speed and only restore clamping once they
+// have crossed the border naturally.
+function _returnFromCampAssault(unit, dtSec, grid, speedTiles) {
+    const rally = _getDefendRallyTile() ?? { tx: 32, ty: 32 };
+    unit.targetX = rally.tx * TILE_SIZE + TILE_SIZE / 2;
+    unit.targetY = rally.ty * TILE_SIZE + TILE_SIZE / 2;
+    unit._campReturnRepathTimer = (unit._campReturnRepathTimer ?? 99) + dtSec;
+    if (unit._campReturnRepathTimer >= 2.0) {
+        unit._campReturnRepathTimer = 0;
+        const sx = Math.floor(unit.x / TILE_SIZE), sy = Math.floor(unit.y / TILE_SIZE);
+        const p = aStarPath(sx, sy, rally.tx, rally.ty, isFriendlyWalkable);
+        unit._chasePath = (p && p.length > 0) ? p : [];
+        unit._chaseIndex = 0;
+    }
+    const spd = TILE_SIZE * speedTiles * dtSec;
+    if (unit._chaseIndex < unit._chasePath.length) {
+        const wp = unit._chasePath[unit._chaseIndex];
+        const tx = wp % GRID_WIDTH;
+        const ty = (wp / GRID_WIDTH) | 0;
+        const wpX = tx * TILE_SIZE + TILE_SIZE / 2, wpY = ty * TILE_SIZE + TILE_SIZE / 2;
+        const d = Math.hypot(wpX - unit.x, wpY - unit.y);
+        if (d <= spd) { unit.x = wpX; unit.y = wpY; unit._chaseIndex++; }
+        else if (d > 0) { unit.x += (wpX - unit.x) / d * spd; unit.y += (wpY - unit.y) / d * spd; }
+    } else {
+        const dx = unit.targetX - unit.x, dy = unit.targetY - unit.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 0) {
+            const step = Math.min(d, spd);
+            unit.x += dx / d * step;
+            unit.y += dy / d * step;
+        }
+    }
+    applySeparation(unit, dtSec, isFriendlyWalkable);
+    if (!_isUnitInTerritory(unit)) return;
+
+    unit._assaulting = false;
+    unit._campReturnRepathTimer = 0;
+    unit._chasePath = [];
+    unit._chaseIndex = 0;
+    unit._chaseTarget = null;
+    unit._path = [];
+    unit._pathIndex = 0;
+    unit._pathState = null;
+    unit.state = 'idle';
+    unit._idleTimer = 0;
+    unit._moveFromX = unit.x;
+    unit._moveFromY = unit.y;
+    unit.targetX = unit.x;
+    unit.targetY = unit.y;
+    unit._moveTimer = 0;
 }
 
 // Nearest raider with fewer than maxMeleeAttackersPerTarget attackers; falls
@@ -1075,6 +1135,10 @@ export class Soldier {
             _marchOnCamp(this, dtSec, grid, 1.5);
             return;
         }
+        if (this._assaulting && !_isUnitInTerritory(this)) {
+            _returnFromCampAssault(this, dtSec, grid, 1.5);
+            return;
+        }
         this._assaulting = false;
         this._chasePath = []; this._chaseIndex = 0; this._chaseTarget = null;
         this.hp = Math.min(this.maxHp, this.hp + (gameState.upgrades?.field_medicine ? 6 : 3) * dtSec); // heal out of combat
@@ -1357,6 +1421,10 @@ export class Knight {
         if (sim.combatMode === 'attack' && (sim.raiderCamps?.length ?? 0) > 0) {
             this._assaulting = true;
             _marchOnCamp(this, dtSec, grid, 1.2);
+            return;
+        }
+        if (this._assaulting && !_isUnitInTerritory(this)) {
+            _returnFromCampAssault(this, dtSec, grid, 1.2);
             return;
         }
         this._assaulting = false;

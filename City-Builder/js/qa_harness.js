@@ -349,6 +349,28 @@ function testRegressionBugs() {
         window.updateCampAssault(1);
         results.soldiersAssaultCamps = camp.hp < campHp;
 
+        // Destroying the final camp must not let the territory clamp teleport
+        // returning soldiers/knights. Seed deliberately stale patrol timing to
+        // cover the original speed-burst failure mode as well.
+        sim.raiderCamps = [];
+        const returnStartX = (32.5 + sim.currentTerritoryRadius + 3) * TILE_SIZE;
+        const returnStartY = 32.5 * TILE_SIZE;
+        const returners = [
+            { unit: new window.Soldier(returnStartX, returnStartY), speed: 1.5 },
+            { unit: new window.Knight(returnStartX, returnStartY), speed: 1.2 },
+        ];
+        results.campAssaultersReturnAtNormalSpeed = returners.every(({ unit, speed }) => {
+            unit._assaulting = true;
+            unit.state = 'patrolling';
+            unit._moveTimer = 999;
+            unit._moveFromX = 0;
+            unit._moveFromY = 0;
+            const beforeX = unit.x, beforeY = unit.y;
+            unit.update(0.25, sim.grid, []);
+            const moved = Math.hypot(unit.x - beforeX, unit.y - beforeY);
+            return moved > 0 && moved <= TILE_SIZE * speed * 0.25 + 1 && unit._assaulting;
+        });
+
         const ai = window.soldiers.indexOf(assaulter);
         if (ai !== -1) window.soldiers.splice(ai, 1);
         sim.raiderCamps = [];
