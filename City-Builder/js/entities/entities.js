@@ -1040,8 +1040,8 @@ export class Soldier {
         // lets towers/archers handle distant stragglers.
         const engageable = _selectEngageableRaiders(activeRaiders);
         if (engageable.length > 0) {
-            this._assaulting = false;
             const closest = _pickMeleeTarget(this, engageable);
+            this._assaulting = !!closest?.isCampGuard;
             if (closest) {
                 this._chaseRepathTimer += dtSec;
                 if (this._chaseTarget !== closest || this._chaseRepathTimer >= 1.5 || this._chaseIndex >= this._chasePath.length) {
@@ -1325,8 +1325,8 @@ export class Knight {
         // (see _selectEngageableRaiders) so knights hold position with the line.
         const engageable = _selectEngageableRaiders(activeRaiders);
         if (engageable.length > 0) {
-            this._assaulting = false;
             const closest = _pickMeleeTarget(this, engageable);
+            this._assaulting = !!closest?.isCampGuard;
             if (closest) {
                 this._chaseRepathTimer += dtSec;
                 if (this._chaseTarget !== closest || this._chaseRepathTimer >= 1.5 || this._chaseIndex >= this._chasePath.length) {
@@ -1744,6 +1744,27 @@ export class Raider {
 
     update(dtSec) {
         if (this.state !== 'walking') return;
+
+        // Camp guards are real combat targets, but never join the city assault.
+        // They hold their assigned ring position and fight through the standard
+        // soldier/knight melee exchange when attackers reach them.
+        if (this.isCampGuard) {
+            const camp = sim.raiderCamps.find(c => c.id === this.campId);
+            if (!camp) { this.state = 'dead'; return; }
+            const gx = Number.isFinite(this.guardX) ? this.guardX : camp.x;
+            const gy = Number.isFinite(this.guardY) ? this.guardY : camp.y;
+            const dx = gx - this.x, dy = gy - this.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist > TILE_SIZE * 0.35) {
+                const step = Math.min(dist, TILE_SIZE * 0.9 * dtSec);
+                this.x += dx / dist * step;
+                this.y += dy / dist * step;
+            }
+            this.targetX = camp.x;
+            this.targetY = camp.y;
+            applySeparation(this, dtSec, isRaiderWalkable);
+            return;
+        }
 
         if (this._repathTimer > 0) { this._repathTimer -= dtSec; return; }
 

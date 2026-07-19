@@ -144,8 +144,9 @@ export const COMBAT_BALANCE = Object.freeze({
     // One per city; nearby soldiers fight harder while he stands
     captain:  Object.freeze({ meleeDps: 30, auraRangeTiles: 5, auraDpsMult: 1.25 }),
     // Camps: each standing camp strengthens raids; assaulting them is what
-    // ATTACK mode is for. Camp defenders graze attackers lightly.
-    camp:     Object.freeze({ hp: 300, waveSizeBonusPerCamp: 0.15, counterDps: 3, destroyReward: 100, destroyRaidDelaySec: 45 }),
+    // ATTACK mode is for. A camp's garrison is half its spawning wave, capped
+    // so late-game camps remain dangerous without flooding the simulation.
+    camp:     Object.freeze({ hp: 300, waveSizeBonusPerCamp: 0.15, garrisonRatio: 0.5, minGarrison: 3, maxGarrison: 12, guardRadiusTiles: 2.5, destroyReward: 100, destroyRaidDelaySec: 45 }),
     archer:   Object.freeze({ damage: 20, steelBowsDamage: 25, rangeTiles: 12, fireIntervalSec: 1.5 }),
     tower:    Object.freeze({ damage: 15, tier2Damage: 20, rangeTiles: 8, tier2RangeTiles: 10, fireIntervalSec: 1.0 }),
     ballista: Object.freeze({ fireIntervalSec: 8.0 }),
@@ -529,7 +530,7 @@ function migrateSaveToV7(data) {
     // V7 persists active-raid state. Older saves derive it from the raiders array
     // so a mid-raid save no longer loads into a broken "raiders but no raid" state.
     if (data.raidActive === undefined) {
-        data.raidActive = (data.raiders || []).some(r => r.state === 'walking');
+        data.raidActive = (data.raiders || []).some(r => r.state === 'walking' && !r.isCampGuard);
     }
     if (data.raidActiveTimer === undefined) data.raidActiveTimer = 0;
     if (data.raidBuildingsDestroyed === undefined) data.raidBuildingsDestroyed = 0;
@@ -580,12 +581,21 @@ export function saveGame(slotKey = SAVE_KEY) {
         dayTimer: sim.dayTimer, day: gameState.day, season: gameState.season,
         camera: { x: sim.camera.x, y: sim.camera.y, zoom: sim.camera.zoom },
         structures: [], roads: [],
-        raiderCamps: sim.raiderCamps.map(c => ({ x: c.x, y: c.y, hp: c.hp, maxHp: c.maxHp })),
+        raiderCamps: sim.raiderCamps.map(c => ({
+            id: c.id, x: c.x, y: c.y, hp: c.hp, maxHp: c.maxHp,
+            waveNum: c.waveNum, garrisonSize: c.garrisonSize,
+            garrisonInitialized: c.garrisonInitialized,
+        })),
         diplomacyFlags: Object.assign({}, gameState.diplomacyFlags || {}),
         soldiers: soldiers.map(s => ({ x: s.x, y: s.y, hp: s.hp, maxHp: s.maxHp, isCaptain: s.isCaptain || undefined })),
         archers:  archers.map(a => ({ x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp })),
         knights:  knights.map(k => ({ x: k.x, y: k.y, hp: k.hp, maxHp: k.maxHp })),
-        raiders:  raiders.map(r => ({ x: r.x, y: r.y, hp: r.hp, maxHp: r.maxHp, type: r.type, state: r.state, objective: r.objective, destTX: r.destTX, destTY: r.destTY })),
+        raiders:  raiders.map(r => ({
+            x: r.x, y: r.y, hp: r.hp, maxHp: r.maxHp, type: r.type,
+            state: r.state, objective: r.objective, destTX: r.destTX, destTY: r.destTY,
+            isCampGuard: r.isCampGuard || undefined, campId: r.campId,
+            guardX: r.guardX, guardY: r.guardY,
+        })),
         incidentState: sim.incidentManager ? sim.incidentManager.serialize() : null,
         droughtActive: sim.droughtActive, strikeActive: sim.strikeActive,
         merchantNPC: sim.merchantNPC ? {
@@ -788,7 +798,11 @@ export function loadGame(slotKey = SAVE_KEY) {
     gameState.endless = d.endless ?? false;
     gameState.victoryAchieved = d.victoryAchieved ?? false;
     gameState.diplomacyFlags = Object.assign({}, d.diplomacyFlags ?? {});
-    sim.raiderCamps = (d.raiderCamps || []).map(c => ({ x: c.x, y: c.y, hp: c.hp, maxHp: c.maxHp ?? c.hp }));
+    sim.raiderCamps = (d.raiderCamps || []).map(c => ({
+        id: c.id, x: c.x, y: c.y, hp: c.hp, maxHp: c.maxHp ?? c.hp,
+        waveNum: c.waveNum, garrisonSize: c.garrisonSize,
+        garrisonInitialized: c.garrisonInitialized ?? false,
+    }));
     sim.tier2Upgrades = d.tier2Upgrades ? Object.assign({}, d.tier2Upgrades) : {};
     
     // Restore raw sub-second timers
@@ -827,8 +841,17 @@ export function loadGame(slotKey = SAVE_KEY) {
         if (rData.state !== undefined) r.state = rData.state;
         if (rData.objective !== undefined) r.objective = rData.objective;
         if (rData.destTX !== undefined) { r.destTX = rData.destTX; r.destTY = rData.destTY; }
+        if (rData.isCampGuard) {
+            r.isCampGuard = true;
+            r.campId = rData.campId;
+            r.guardX = rData.guardX;
+            r.guardY = rData.guardY;
+        }
         raiders.push(r);
     });
+    // Old saves predate real camp defenders. Initialize those camps once; saves
+    // that already contain a depleted garrison never replenish it on load.
+    window.ensureRaiderCampGarrisons?.();
     sim.lastSeason = d.lastSeason ?? gameState.season;
     sim.gameIsPaused = false;
     sim.userPaused = false;
@@ -839,7 +862,7 @@ export function loadGame(slotKey = SAVE_KEY) {
     _buildStaticCache();
     // Restore active-raid state AFTER raiders/citizens/structure lists exist, so
     // defenders re-engage and citizens re-hide when a mid-raid save is loaded.
-    sim.raidActive = d.raidActive ?? raiders.some(r => r.state === 'walking');
+    sim.raidActive = d.raidActive ?? raiders.some(r => r.state === 'walking' && !r.isCampGuard);
     sim.raidActiveTimer = d.raidActiveTimer ?? 0;
     sim.raidBuildingsDestroyed = d.raidBuildingsDestroyed ?? 0;
     sim.raidCitizensKilled = d.raidCitizensKilled ?? 0;

@@ -312,22 +312,41 @@ function testRegressionBugs() {
             && lordSize === (window.RAID_WAVE_SIZES?.[4] ?? 32);
     }
 
-    // Raider camps: a standing camp strengthens raids, and in ATTACK mode with
-    // no raiders on the field, soldiers grind its HP down.
+    // Raider camps: a standing camp strengthens raids and receives a visible
+    // half-wave garrison. The tent stays protected until those guards are gone.
     {
         sim.raiderCamps = [];
         const sizeNoCamp = window.getScaledWaveSize(5, 48);
         const campHp = window.COMBAT_BALANCE?.camp?.hp ?? 300;
-        const camp = { x: 40 * TILE_SIZE + TILE_SIZE / 2, y: 40 * TILE_SIZE + TILE_SIZE / 2, hp: campHp, maxHp: campHp };
+        const camp = {
+            id: 9001, x: 40 * TILE_SIZE + TILE_SIZE / 2, y: 40 * TILE_SIZE + TILE_SIZE / 2,
+            hp: campHp, maxHp: campHp, waveNum: 5, garrisonInitialized: false,
+        };
         sim.raiderCamps.push(camp);
         results.campBoostsWaveSize = window.getScaledWaveSize(5, 48) > sizeNoCamp;
 
         window.raiders.length = 0;
+        window.ensureRaiderCampGarrisons();
+        const guards = window.raiders.filter(r => r.isCampGuard && r.campId === camp.id);
+        const cfg = window.COMBAT_BALANCE?.camp;
+        const expectedGuards = Math.max(cfg?.minGarrison ?? 3,
+            Math.min(cfg?.maxGarrison ?? 12, Math.ceil((window.RAID_WAVE_SIZES?.[4] ?? 32) * (cfg?.garrisonRatio ?? 0.5))));
+        results.campsHaveGarrisons = guards.length === expectedGuards
+            && guards.every(r => Math.hypot(r.x - camp.x, r.y - camp.y) <= (cfg?.guardRadiusTiles ?? 2.5) * TILE_SIZE + 1);
+
         sim.raidActive = false;
+        sim.combatMode = 'defend';
+        window.update(16);
+        results.campGuardsRequireAttackMode = window._activeRaiders.length === 0;
         sim.combatMode = 'attack';
         const assaulter = new window.Soldier(camp.x + TILE_SIZE, camp.y);
         window.soldiers.push(assaulter);
-        for (let i = 0; i < 5; i++) window.update(200);
+        window.update(200);
+        results.garrisonProtectsCamp = camp.hp === campHp;
+        window.raiders.length = 0;
+        // Exercise the camp exchange directly after clearing the garrison; the
+        // full-frame loop can clamp this deliberately out-of-territory fixture.
+        window.updateCampAssault(1);
         results.soldiersAssaultCamps = camp.hp < campHp;
 
         const ai = window.soldiers.indexOf(assaulter);

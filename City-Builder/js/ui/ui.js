@@ -1671,8 +1671,8 @@ export function renderWorldOverlay() {
     let renderedRaiders = 0;
     for (const r of raiders) {
         if (!isVisibleUnit(r)) continue;
-        // Cap covers the largest endless-mode wave so fighting units are never invisible
-        if (renderedRaiders++ >= 260) break;
+        // Covers the largest endless-mode wave plus two capped camp garrisons.
+        if (renderedRaiders++ >= 300) break;
         const raiderAsset = r.type === 'torch' ? sim.assets['enemy_torch_raider']
                           : r.type === 'siege' ? sim.assets['enemy_siege_raider']
                           : sim.assets['enemy_raider'];

@@ -603,6 +603,50 @@ function getScaledWaveSize(waveNum, strength = sim.raidStrength) {
 }
 
 // ===================== RAIDER CAMPS =====================
+function _allocateCampId() {
+    let maxId = 0;
+    for (const camp of sim.raiderCamps) maxId = Math.max(maxId, Number(camp.id) || 0);
+    return maxId + 1;
+}
+
+function _getCampGarrisonSize(waveNum) {
+    const cfg = COMBAT_BALANCE?.camp;
+    const ratio = cfg?.garrisonRatio ?? 0.5;
+    const min = cfg?.minGarrison ?? 3;
+    const max = cfg?.maxGarrison ?? 12;
+    return Math.max(min, Math.min(max, Math.ceil(getRaidWaveSize(Math.max(1, waveNum)) * ratio)));
+}
+
+function _spawnCampGarrison(camp, count) {
+    const radius = (COMBAT_BALANCE?.camp?.guardRadiusTiles ?? 2.5) * TILE_SIZE;
+    const angleOffset = Math.random() * Math.PI * 2;
+    for (let i = 0; i < count; i++) {
+        const angle = angleOffset + (i / count) * Math.PI * 2;
+        const guardX = camp.x + Math.cos(angle) * radius;
+        const guardY = camp.y + Math.sin(angle) * radius;
+        const guard = new Raider(guardX, guardY, 'normal');
+        guard.isCampGuard = true;
+        guard.campId = camp.id;
+        guard.guardX = guardX;
+        guard.guardY = guardY;
+        guard.targetX = camp.x;
+        guard.targetY = camp.y;
+        guard._repathTimer = 0;
+        raiders.push(guard);
+    }
+}
+
+function ensureRaiderCampGarrisons() {
+    for (const camp of sim.raiderCamps) {
+        if (camp.id == null) camp.id = _allocateCampId();
+        if (camp.garrisonInitialized) continue;
+        const count = camp.garrisonSize ?? _getCampGarrisonSize(camp.waveNum ?? Math.max(3, sim.raidCount));
+        camp.garrisonSize = count;
+        camp.garrisonInitialized = true;
+        _spawnCampGarrison(camp, count);
+    }
+}
+
 function maybeSpawnRaiderCamp(waveNum) {
     if (waveNum < 3 || sim.raiderCamps.length >= 2 || Math.random() >= 0.45) return false;
     const angle = Math.random() * Math.PI * 2;
@@ -610,12 +654,18 @@ function maybeSpawnRaiderCamp(waveNum) {
     const tx = Math.max(2, Math.min(GRID_WIDTH - 3, Math.round(32 + Math.cos(angle) * distTiles)));
     const ty = Math.max(2, Math.min(GRID_HEIGHT - 3, Math.round(32 + Math.sin(angle) * distTiles)));
     const campHp = COMBAT_BALANCE?.camp?.hp ?? 300;
-    sim.raiderCamps.push({
+    const camp = {
+        id: _allocateCampId(),
         x: tx * TILE_SIZE + TILE_SIZE / 2,
         y: ty * TILE_SIZE + TILE_SIZE / 2,
         hp: campHp,
         maxHp: campHp,
-    });
+        waveNum,
+        garrisonSize: _getCampGarrisonSize(waveNum),
+        garrisonInitialized: true,
+    };
+    sim.raiderCamps.push(camp);
+    _spawnCampGarrison(camp, camp.garrisonSize);
     return true;
 }
 
@@ -627,6 +677,8 @@ function updateCampAssault(dtSec) {
     const rangeSq = (1.5 * TILE_SIZE) * (1.5 * TILE_SIZE);
     for (let ci = sim.raiderCamps.length - 1; ci >= 0; ci--) {
         const camp = sim.raiderCamps[ci];
+        // The tent cannot be focus-fired while its visible garrison still stands.
+        if (raiders.some(r => r.state === 'walking' && r.isCampGuard && r.campId === camp.id)) continue;
         for (const list of [soldiers, knights]) {
             for (let ui = list.length - 1; ui >= 0; ui--) {
                 const u = list[ui];
@@ -636,16 +688,8 @@ function updateCampAssault(dtSec) {
                           : list === soldiers ? (CB?.soldier?.meleeDps ?? 15)
                           : (CB?.knight?.meleeDps ?? 20);
                 camp.hp -= dps * dtSec;
-                const takenMult = list === knights ? (CB?.knight?.damageTakenMult ?? 0.5) : 1;
-                u.hp -= (CB?.camp?.counterDps ?? 3) * takenMult * dtSec;
                 if (Math.random() < dtSec * 3) {
                     spawnParticle((u.x + camp.x) / 2, (u.y + camp.y) / 2, 'slash', 0.2);
-                }
-                if (u.hp <= 0) {
-                    playEnemyDeathSFX();
-                    spawnParticle(u.x, u.y, 'puff', 0.4);
-                    list.splice(ui, 1);
-                    markUIDirty();
                 }
             }
         }
@@ -899,7 +943,7 @@ function resolveRaid() {
     const isVictory = sim.raidBuildingsDestroyed <= Math.max(1, Math.floor(waveSize * 0.1))
                    && sim.raidCitizensKilled   <= Math.max(1, Math.floor(waveSize * 0.15));
     for (const r of raiders) {
-        if (r.state !== 'walking') continue;
+        if (r.state !== 'walking' || r.isCampGuard) continue;
         if (isVictory) {
             r.state = 'victory'; r._victoryTimer = 0; r._alpha = 1.0; r._rotation = 0;
         } else {
@@ -1330,7 +1374,7 @@ function update(dtMs) {
         // the game can never stall in a permanent raid.
         if (sim.raidActiveTimer >= RAID_ACTIVE_TIMEOUT) {
             for (const r of raiders) {
-                if (r.state !== 'walking') continue;
+                if (r.state !== 'walking' || r.isCampGuard) continue;
                 r._attacking = false;
                 r._target = { type: 'retreat' };
                 r._path = [];
@@ -1340,7 +1384,7 @@ function update(dtMs) {
         }
         let anyWalking = false;
         for (let i = 0; i < raiders.length; i++) {
-            if (raiders[i].state === 'walking') { anyWalking = true; break; }
+            if (raiders[i].state === 'walking' && !raiders[i].isCampGuard) { anyWalking = true; break; }
         }
         if (raiders.length === 0 || !anyWalking) {
             resolveRaid();
@@ -1394,9 +1438,11 @@ function update(dtMs) {
     // Refill the shared active-raiders scratch list in place (no allocation) — reused by
     // soldiers, archers, knights, gates.
     _activeRaiders.length = 0;
-    if (sim.raidActive) {
-        for (let i = 0; i < raiders.length; i++) {
-            if (raiders[i].state === 'walking') _activeRaiders.push(raiders[i]);
+    for (let i = 0; i < raiders.length; i++) {
+        const r = raiders[i];
+        if (r.state !== 'walking') continue;
+        if ((!r.isCampGuard && sim.raidActive) || (r.isCampGuard && sim.combatMode === 'attack')) {
+            _activeRaiders.push(r);
         }
     }
     if (raiders.length > 0) updateRaiders(dtSec);
@@ -1889,7 +1935,7 @@ Object.assign(window, {
     handleGridClick,
     spawnCitizen, trainSoldier, updateSoldiers, trainArcher, updateArchers,
     trainKnight, trainCaptain, updateKnights, updateGates, killRaider, fireArrow, fireBolt,
-    maybeSpawnRaiderCamp, updateCampAssault,
+    maybeSpawnRaiderCamp, ensureRaiderCampGarrisons, updateCampAssault,
     updateActiveProjectiles, _startFireAtTile, _getRaiderType, getRaidWaveSize,
     getScaledWaveSize, showTutorial,
     chooseRaidDirections, getSpawnPos, sendCitizensToHide, startRaidWave,
