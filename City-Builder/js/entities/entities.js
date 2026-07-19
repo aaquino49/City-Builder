@@ -2,6 +2,7 @@
 
 // Helper for units clamping
 function _clampToTerritory(u) {
+    if (u._assaulting) return; // camp assaults range beyond the border
     const cx = 32.5 * TILE_SIZE, cy = 32.5 * TILE_SIZE;
     const maxR = (currentTerritoryRadius + 1) * TILE_SIZE;
     const dx = u.x - cx, dy = u.y - cy;
@@ -198,6 +199,52 @@ function _selectEngageableRaiders(activeRaiders) {
         if (dx * dx + dy * dy <= leashSq) _leashScratch.push(r);
     }
     return _leashScratch;
+}
+
+// ATTACK mode with no raiders to fight: march on the nearest raider camp.
+// Reuses the unit's chase-path fields; damage exchange happens in main.js's
+// updateCampAssault once the unit is in range.
+function _marchOnCamp(unit, dtSec, grid, speedTiles) {
+    const camps = window.raiderCamps;
+    let camp = null, bestSq = Infinity;
+    for (const c of camps) {
+        const dx = c.x - unit.x, dy = c.y - unit.y;
+        const dSq = dx * dx + dy * dy;
+        if (dSq < bestSq) { bestSq = dSq; camp = c; }
+    }
+    if (!camp) return;
+    // Face the camp (used by the render-side sprite flip)
+    unit.targetX = camp.x;
+    unit.targetY = camp.y;
+    const dist = Math.sqrt(bestSq);
+    if (dist <= TILE_SIZE * 1.5) {
+        applySeparation(unit, dtSec, isFriendlyWalkable);
+        return; // in melee range — updateCampAssault deals the damage
+    }
+    unit._campRepathTimer = (unit._campRepathTimer ?? 99) + dtSec;
+    if (unit._campRepathTimer >= 2.0 || unit._chaseIndex >= unit._chasePath.length) {
+        unit._campRepathTimer = 0;
+        const sx = Math.floor(unit.x / TILE_SIZE), sy = Math.floor(unit.y / TILE_SIZE);
+        const p = aStarPath(sx, sy, Math.floor(camp.x / TILE_SIZE), Math.floor(camp.y / TILE_SIZE), isFriendlyWalkable);
+        unit._chasePath = (p && p.length > 0) ? p : [];
+        unit._chaseIndex = 0;
+    }
+    const spd = TILE_SIZE * speedTiles * dtSec;
+    if (unit._chaseIndex < unit._chasePath.length) {
+        const wp = unit._chasePath[unit._chaseIndex];
+        const tx = wp % GRID_WIDTH;
+        const ty = (wp / GRID_WIDTH) | 0;
+        const wpX = tx * TILE_SIZE + TILE_SIZE / 2, wpY = ty * TILE_SIZE + TILE_SIZE / 2;
+        const d = Math.hypot(wpX - unit.x, wpY - unit.y);
+        if (d <= spd) { unit.x = wpX; unit.y = wpY; unit._chaseIndex++; }
+        else { unit.x += (wpX - unit.x) / d * spd; unit.y += (wpY - unit.y) / d * spd; }
+    } else {
+        // Open ground fallback — straight-line march
+        const d = dist || 1;
+        unit.x += (camp.x - unit.x) / d * spd;
+        unit.y += (camp.y - unit.y) / d * spd;
+    }
+    applySeparation(unit, dtSec, isFriendlyWalkable);
 }
 
 // Nearest raider with fewer than maxMeleeAttackersPerTarget attackers; falls
@@ -932,6 +979,7 @@ export class Soldier {
         // lets towers/archers handle distant stragglers.
         const engageable = _selectEngageableRaiders(activeRaiders);
         if (engageable.length > 0) {
+            this._assaulting = false;
             const closest = _pickMeleeTarget(this, engageable);
             if (closest) {
                 this._chaseRepathTimer += dtSec;
@@ -959,6 +1007,14 @@ export class Soldier {
             }
             return;
         }
+        // ATTACK mode with standing raider camps and nothing else to fight:
+        // march out and raze them (the whole point of attack mode).
+        if (_combatMode === 'attack' && (window.raiderCamps?.length ?? 0) > 0) {
+            this._assaulting = true;
+            _marchOnCamp(this, dtSec, grid, 1.5);
+            return;
+        }
+        this._assaulting = false;
         this._chasePath = []; this._chaseIndex = 0; this._chaseTarget = null;
         this.hp = Math.min(this.maxHp, this.hp + (gameState.upgrades?.field_medicine ? 6 : 3) * dtSec); // heal out of combat
         if (this.state === 'idle') {
@@ -1203,6 +1259,7 @@ export class Knight {
         // (see _selectEngageableRaiders) so knights hold position with the line.
         const engageable = _selectEngageableRaiders(activeRaiders);
         if (engageable.length > 0) {
+            this._assaulting = false;
             const closest = _pickMeleeTarget(this, engageable);
             if (closest) {
                 this._chaseRepathTimer += dtSec;
@@ -1230,6 +1287,13 @@ export class Knight {
             }
             return;
         }
+        // ATTACK mode: knights join camp assaults alongside soldiers
+        if (_combatMode === 'attack' && (window.raiderCamps?.length ?? 0) > 0) {
+            this._assaulting = true;
+            _marchOnCamp(this, dtSec, grid, 1.2);
+            return;
+        }
+        this._assaulting = false;
         this._chasePath = []; this._chaseIndex = 0; this._chaseTarget = null;
         this.hp = Math.min(this.maxHp, this.hp + (gameState.upgrades?.field_medicine ? 6 : 3) * dtSec); // heal out of combat
         if (this.state === 'idle') {

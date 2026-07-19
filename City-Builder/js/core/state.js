@@ -107,6 +107,11 @@ export const UNIT_BALANCE = Object.freeze({
         goldCost: 60,
         ironCost: 20,
     }),
+    captain: Object.freeze({
+        goldCost: 150,
+        ironCost: 30,
+        baseHp: 250,
+    }),
 });
 
 export const ECONOMY_BALANCE = Object.freeze({
@@ -136,6 +141,11 @@ export const PRODUCTION_BALANCE = Object.freeze({
 export const COMBAT_BALANCE = Object.freeze({
     soldier:  Object.freeze({ meleeDps: 15 }),
     knight:   Object.freeze({ meleeDps: 20, damageTakenMult: 0.5 }),
+    // One per city; nearby soldiers fight harder while he stands
+    captain:  Object.freeze({ meleeDps: 30, auraRangeTiles: 5, auraDpsMult: 1.25 }),
+    // Camps: each standing camp strengthens raids; assaulting them is what
+    // ATTACK mode is for. Camp defenders graze attackers lightly.
+    camp:     Object.freeze({ hp: 300, waveSizeBonusPerCamp: 0.15, counterDps: 3, destroyReward: 100, destroyRaidDelaySec: 45 }),
     archer:   Object.freeze({ damage: 20, steelBowsDamage: 25, rangeTiles: 12, fireIntervalSec: 1.5 }),
     tower:    Object.freeze({ damage: 25, tier2Damage: 30, rangeTiles: 8, tier2RangeTiles: 10, fireIntervalSec: 1.0 }),
     ballista: Object.freeze({ fireIntervalSec: 8.0 }),
@@ -247,6 +257,7 @@ const _rawGameState = {
     farmsBuilt: 0,
     endless: false,          // player chose CONTINUE REIGN after victory — raids keep scaling
     victoryAchieved: false,  // guards against re-triggering the victory modal every frame
+    diplomacyFlags: {},      // choices set flags here; follow-up events guard on them
 };
 
 export const STATE_SCHEMA = Object.freeze({
@@ -318,6 +329,10 @@ export const archers = [];
 export const knights = [];
 export const activeProjectiles = [];
 export const raiders = [];
+// Raider camps: pillage bases that appear after mid-game waves. While one
+// stands, raids grow stronger; destroying it (ATTACK mode) weakens/delays them.
+export let raiderCamps = [];
+export function setRaiderCamps(arr) { raiderCamps = arr; window.raiderCamps = arr; }
 
 // Territory radius counts every population-derived unit so that training an
 // archer/knight (which consumes a citizen) never shrinks the border.
@@ -458,6 +473,92 @@ const _bindGlobals = () => {
 };
 _bindGlobals();
 
+// ===================== SYNCED WINDOW ACCESSORS =====================
+// Every mutable module-scope binding above is re-exposed on window as an
+// accessor pair backed by the SAME module binding. A bare `window.raidTimer = 0`
+// (or `raidTimer = 0` from any module — it resolves to the window property) now
+// updates the storage that state.js readers, saveGame(), and the exported
+// setters all use. This eliminates the "bare assignment only updated the window
+// copy, so the save went stale" desync bug class documented in past fixes.
+function _sync(name, get, set) {
+    Object.defineProperty(window, name, { get, set, configurable: true });
+}
+_sync('_shakeX', () => _shakeX, v => { _shakeX = v; });
+_sync('_shakeY', () => _shakeY, v => { _shakeY = v; });
+_sync('_shakeIntensity', () => _shakeIntensity, v => { _shakeIntensity = v; });
+_sync('incidentManager', () => incidentManager, v => { incidentManager = v; });
+_sync('droughtActive', () => droughtActive, v => { droughtActive = v; });
+_sync('strikeActive', () => strikeActive, v => { strikeActive = v; });
+_sync('merchantNPC', () => merchantNPC, v => { merchantNPC = v; });
+_sync('statsOverlayVisible', () => statsOverlayVisible, v => { statsOverlayVisible = v; });
+_sync('_statsUpdateTimer', () => _statsUpdateTimer, v => { _statsUpdateTimer = v; });
+_sync('_bannerTimeout', () => _bannerTimeout, v => { _bannerTimeout = v; });
+_sync('spawnTimer', () => spawnTimer, v => { spawnTimer = v; });
+_sync('taxTimer', () => taxTimer, v => { taxTimer = v; });
+_sync('emigrationTimer', () => emigrationTimer, v => { emigrationTimer = v; });
+_sync('autoSaveTimer', () => autoSaveTimer, v => { autoSaveTimer = v; });
+_sync('jobScanTimer', () => jobScanTimer, v => { jobScanTimer = v; });
+_sync('dayTimer', () => dayTimer, v => { dayTimer = v; });
+_sync('_dayPhase', () => _dayPhase, v => { _dayPhase = v; });
+_sync('_overlayAlpha', () => _overlayAlpha, v => { _overlayAlpha = v; });
+_sync('_raidQueued', () => _raidQueued, v => { _raidQueued = v; });
+_sync('_griefPenalty', () => _griefPenalty, v => { _griefPenalty = v; });
+_sync('_happinessFactors', () => _happinessFactors, v => { _happinessFactors = v; });
+_sync('_combatMode', () => _combatMode, v => { _combatMode = v; });
+_sync('_diplomacyTimers', () => _diplomacyTimers, v => { _diplomacyTimers = v; });
+_sync('_allianceTimer', () => _allianceTimer, v => { _allianceTimer = v; });
+_sync('_soldierCostMult', () => _soldierCostMult, v => { _soldierCostMult = v; });
+_sync('_soldierCostTimer', () => _soldierCostTimer, v => { _soldierCostTimer = v; });
+_sync('_tier2Upgrades', () => _tier2Upgrades, v => { _tier2Upgrades = v; });
+_sync('_buildingPanelOpen', () => _buildingPanelOpen, v => { _buildingPanelOpen = v; });
+_sync('_buildingPanelTX', () => _buildingPanelTX, v => { _buildingPanelTX = v; });
+_sync('_buildingPanelTY', () => _buildingPanelTY, v => { _buildingPanelTY = v; });
+_sync('_lastSeason', () => _lastSeason, v => { _lastSeason = v; });
+_sync('_snowParticles', () => _snowParticles, v => { _snowParticles = v; });
+_sync('userPaused', () => userPaused, v => { userPaused = v; });
+_sync('timeScale', () => timeScale, v => { timeScale = v; });
+_sync('currentTerritoryRadius', () => currentTerritoryRadius, v => { currentTerritoryRadius = v; });
+_sync('expansionBannerTimer', () => expansionBannerTimer, v => { expansionBannerTimer = v; });
+_sync('raidTimer', () => raidTimer, v => { raidTimer = v; });
+_sync('raidStrength', () => raidStrength, v => { raidStrength = v; });
+_sync('raidCount', () => raidCount, v => { raidCount = v; });
+_sync('raidActive', () => raidActive, v => { raidActive = v; });
+_sync('_scoutPhase', () => _scoutPhase, v => { _scoutPhase = v; });
+_sync('_scoutTimer', () => _scoutTimer, v => { _scoutTimer = v; });
+_sync('raidActiveTimer', () => raidActiveTimer, v => { raidActiveTimer = v; });
+_sync('raidBuildingsDestroyed', () => raidBuildingsDestroyed, v => { raidBuildingsDestroyed = v; });
+_sync('raidCitizensKilled', () => raidCitizensKilled, v => { raidCitizensKilled = v; });
+_sync('gameIsPaused', () => gameIsPaused, v => { gameIsPaused = v; });
+_sync('raidWarningPlayed', () => raidWarningPlayed, v => { raidWarningPlayed = v; });
+_sync('raidWarningSpawnCount', () => raidWarningSpawnCount, v => { raidWarningSpawnCount = v; });
+_sync('isDragging', () => isDragging, v => { isDragging = v; });
+_sync('dragStartX', () => dragStartX, v => { dragStartX = v; });
+_sync('dragStartY', () => dragStartY, v => { dragStartY = v; });
+_sync('lastMouseX', () => lastMouseX, v => { lastMouseX = v; });
+_sync('lastMouseY', () => lastMouseY, v => { lastMouseY = v; });
+_sync('mouseScreenX', () => mouseScreenX, v => { mouseScreenX = v; });
+_sync('mouseScreenY', () => mouseScreenY, v => { mouseScreenY = v; });
+_sync('grid', () => grid, v => { grid = v; });
+_sync('camera', () => camera, v => { camera = v; });
+_sync('assets', () => assets, v => { assets = v; });
+_sync('raiderCamps', () => raiderCamps, v => { raiderCamps = v; });
+_sync('activeTowers', () => activeTowers, v => { activeTowers = v; });
+_sync('activeBallistaTowers', () => activeBallistaTowers, v => { activeBallistaTowers = v; });
+_sync('activeGates', () => activeGates, v => { activeGates = v; });
+_sync('activeFarms', () => activeFarms, v => { activeFarms = v; });
+_sync('activeMonuments', () => activeMonuments, v => { activeMonuments = v; });
+_sync('activeWalls', () => activeWalls, v => { activeWalls = v; });
+_sync('activePillageable', () => activePillageable, v => { activePillageable = v; });
+_sync('activeHouses', () => activeHouses, v => { activeHouses = v; });
+_sync('activeGranaries', () => activeGranaries, v => { activeGranaries = v; });
+_sync('activeTaverns', () => activeTaverns, v => { activeTaverns = v; });
+_sync('activeRubble', () => activeRubble, v => { activeRubble = v; });
+_sync('activeBarracks', () => activeBarracks, v => { activeBarracks = v; });
+_sync('activeArcheryRanges', () => activeArcheryRanges, v => { activeArcheryRanges = v; });
+_sync('buildingCounts', () => buildingCounts, v => { buildingCounts = v; });
+_sync('jobfulStructures', () => jobfulStructures, v => { jobfulStructures = v; });
+_sync('underConstruction', () => underConstruction, v => { underConstruction = v; });
+
 export function setGridAndCamera(g) {
     grid = g;
     camera = g.camera;
@@ -569,7 +670,7 @@ Object.assign(window, {
     setRaidActiveTimer, setRaidBuildingsDestroyed, setRaidCitizensKilled, setGameIsPaused,
     setRaidWarningPlayed, setRaidWarningSpawnCount, setIsDragging, setDragStartX,
     setDragStartY, setLastMouseX, setLastMouseY, setMouseScreenX, setMouseScreenY,
-    setBuildingLists, markUIDirty, flushUI
+    setBuildingLists, markUIDirty, flushUI, setRaiderCamps
 });
 
 // ===================== PERSISTENCE / SAVING =====================
@@ -670,7 +771,9 @@ export function saveGame(slotKey = SAVE_KEY) {
         dayTimer, day: gameState.day, season: gameState.season,
         camera: { x: camera.x, y: camera.y, zoom: camera.zoom },
         structures: [], roads: [],
-        soldiers: soldiers.map(s => ({ x: s.x, y: s.y, hp: s.hp, maxHp: s.maxHp })),
+        raiderCamps: raiderCamps.map(c => ({ x: c.x, y: c.y, hp: c.hp, maxHp: c.maxHp })),
+        diplomacyFlags: Object.assign({}, gameState.diplomacyFlags || {}),
+        soldiers: soldiers.map(s => ({ x: s.x, y: s.y, hp: s.hp, maxHp: s.maxHp, isCaptain: s.isCaptain || undefined })),
         archers:  archers.map(a => ({ x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp })),
         knights:  knights.map(k => ({ x: k.x, y: k.y, hp: k.hp, maxHp: k.maxHp })),
         raiders:  raiders.map(r => ({ x: r.x, y: r.y, hp: r.hp, maxHp: r.maxHp, type: r.type, state: r.state, objective: r.objective, destTX: r.destTX, destTY: r.destTY })),
@@ -875,6 +978,8 @@ export function loadGame(slotKey = SAVE_KEY) {
     gameState.raidersDefeated = d.raidersDefeated ?? 0;
     gameState.endless = d.endless ?? false;
     gameState.victoryAchieved = d.victoryAchieved ?? false;
+    gameState.diplomacyFlags = Object.assign({}, d.diplomacyFlags ?? {});
+    setRaiderCamps((d.raiderCamps || []).map(c => ({ x: c.x, y: c.y, hp: c.hp, maxHp: c.maxHp ?? c.hp })));
     setTier2Upgrades(d.tier2Upgrades ? Object.assign({}, d.tier2Upgrades) : {});
     
     // Restore raw sub-second timers
@@ -886,10 +991,11 @@ export function loadGame(slotKey = SAVE_KEY) {
     
     const cx = (grid.width / 2) * TILE_SIZE, cy = (grid.height / 2) * TILE_SIZE;
     for (let i = 0; i < gameState.population; i++) citizens.push(new Citizen(cx, cy));
-    (d.soldiers || []).forEach(({ x, y, hp, maxHp }) => {
+    (d.soldiers || []).forEach(({ x, y, hp, maxHp, isCaptain }) => {
         const s = new Soldier(x, y);
         if (hp !== undefined) s.hp = hp;
         if (maxHp !== undefined) s.maxHp = maxHp;
+        if (isCaptain) s.isCaptain = true;
         soldiers.push(s);
     });
     (d.archers  || []).forEach(({ x, y, hp, maxHp }) => {

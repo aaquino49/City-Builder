@@ -345,17 +345,54 @@ function trainSoldier() {
     // Proxy marks UI dirty; flushUI() will sync on next frame
 }
 
+// One captain per city; trained at a barracks. Soldiers near him fight harder.
+function trainCaptain() {
+    const cfg = UNIT_BALANCE.captain;
+    if (soldiers.some(s => s.isCaptain)) return;
+    if (gameState.gold < cfg.goldCost || gameState.iron < cfg.ironCost) return;
+    const idleIdx = citizens.findIndex(c => c.job === 'idle' && c.state !== 'walking');
+    if (idleIdx === -1) return;
+    if (activeBarracks.length === 0) return;
+    gameState.gold -= cfg.goldCost;
+    gameState.iron -= cfg.ironCost;
+    citizens[idleIdx]._alive = false;
+    citizens.splice(idleIdx, 1);
+    gameState.population = Math.max(0, gameState.population - 1);
+    const b = activeBarracks[Math.floor(Math.random() * activeBarracks.length)];
+    const cap = new Soldier(b.tx * TILE_SIZE + TILE_SIZE / 2, b.ty * TILE_SIZE + TILE_SIZE / 2);
+    cap.isCaptain = true;
+    cap.hp = cfg.baseHp;
+    cap.maxHp = cfg.baseHp;
+    soldiers.push(cap);
+    playTrainSFX();
+    showEventBanner('CAPTAIN COMMISSIONED', 'Nearby soldiers fight harder under his banner.');
+}
+
 function updateSoldiers(dtSec, activeRaiders) {
     for (const sol of soldiers) sol.update(dtSec, grid, activeRaiders);
 
+    // Captain aura: soldiers within range deal bonus melee damage
+    const CBcap = COMBAT_BALANCE?.captain;
+    const auraRange = (CBcap?.auraRangeTiles ?? 5) * TILE_SIZE;
+    const auraRangeSq = auraRange * auraRange;
+    const auraMult = CBcap?.auraDpsMult ?? 1.25;
+    const captains = soldiers.filter(s => s.isCaptain);
+
     for (let si = soldiers.length - 1; si >= 0; si--) {
         const sol = soldiers[si];
+        let dps = sol.isCaptain ? (CBcap?.meleeDps ?? 30) : (COMBAT_BALANCE?.soldier?.meleeDps ?? 15);
+        if (!sol.isCaptain && captains.length) {
+            for (const cap of captains) {
+                const cdx = cap.x - sol.x, cdy = cap.y - sol.y;
+                if (cdx * cdx + cdy * cdy <= auraRangeSq) { dps *= auraMult; break; }
+            }
+        }
         for (let ri = raiders.length - 1; ri >= 0; ri--) {
             const r = raiders[ri];
             if (r.state !== 'walking') continue;
             const dist = Math.hypot(r.x - sol.x, r.y - sol.y);
             if (dist <= TILE_SIZE) {
-                r.hp   -= (COMBAT_BALANCE?.soldier?.meleeDps ?? 15) * dtSec;
+                r.hp   -= dps * dtSec;
                 sol.hp -= (COMBAT_BALANCE?.raider?.meleeDps ?? 15) * dtSec;
                 if (Math.random() < dtSec * 8) {
                     spawnParticle((r.x + sol.x) / 2, (r.y + sol.y) / 2, 'slash', 0.2);
@@ -588,8 +625,70 @@ function getScaledWaveSize(waveNum, strength = raidStrength) {
     const base = getRaidWaveSize(waveNum);
     if (base <= 0) return 0;
     const lordBaseline = getRaidStrengthForWave(Math.min(waveNum, FINAL_RAID_WAVE), 'lord');
-    const mult = lordBaseline > 0 ? strength / lordBaseline : 1;
+    let mult = lordBaseline > 0 ? strength / lordBaseline : 1;
+    // Each standing raider camp emboldens the raids — raze them (ATTACK mode)
+    mult *= 1 + (COMBAT_BALANCE?.camp?.waveSizeBonusPerCamp ?? 0.15) * (raiderCamps?.length || 0);
     return Math.max(1, Math.round(base * mult));
+}
+
+// ===================== RAIDER CAMPS =====================
+function maybeSpawnRaiderCamp(waveNum) {
+    if (waveNum < 3 || raiderCamps.length >= 2 || Math.random() >= 0.45) return false;
+    const angle = Math.random() * Math.PI * 2;
+    const distTiles = 24 + Math.random() * 5;
+    const tx = Math.max(2, Math.min(GRID_WIDTH - 3, Math.round(32 + Math.cos(angle) * distTiles)));
+    const ty = Math.max(2, Math.min(GRID_HEIGHT - 3, Math.round(32 + Math.sin(angle) * distTiles)));
+    const campHp = COMBAT_BALANCE?.camp?.hp ?? 300;
+    raiderCamps.push({
+        x: tx * TILE_SIZE + TILE_SIZE / 2,
+        y: ty * TILE_SIZE + TILE_SIZE / 2,
+        hp: campHp,
+        maxHp: campHp,
+    });
+    return true;
+}
+
+// Melee exchange between assaulting soldiers/knights and camps; runs every
+// frame but exits immediately when no camps exist.
+function updateCampAssault(dtSec) {
+    if (!raiderCamps.length) return;
+    const CB = COMBAT_BALANCE;
+    const rangeSq = (1.5 * TILE_SIZE) * (1.5 * TILE_SIZE);
+    for (let ci = raiderCamps.length - 1; ci >= 0; ci--) {
+        const camp = raiderCamps[ci];
+        for (const list of [soldiers, knights]) {
+            for (let ui = list.length - 1; ui >= 0; ui--) {
+                const u = list[ui];
+                const dx = u.x - camp.x, dy = u.y - camp.y;
+                if (dx * dx + dy * dy > rangeSq) continue;
+                const dps = u.isCaptain ? (CB?.captain?.meleeDps ?? 30)
+                          : list === soldiers ? (CB?.soldier?.meleeDps ?? 15)
+                          : (CB?.knight?.meleeDps ?? 20);
+                camp.hp -= dps * dtSec;
+                const takenMult = list === knights ? (CB?.knight?.damageTakenMult ?? 0.5) : 1;
+                u.hp -= (CB?.camp?.counterDps ?? 3) * takenMult * dtSec;
+                if (Math.random() < dtSec * 3) {
+                    spawnParticle((u.x + camp.x) / 2, (u.y + camp.y) / 2, 'slash', 0.2);
+                }
+                if (u.hp <= 0) {
+                    playEnemyDeathSFX();
+                    spawnParticle(u.x, u.y, 'puff', 0.4);
+                    list.splice(ui, 1);
+                    markUIDirty();
+                }
+            }
+        }
+        if (camp.hp <= 0) {
+            raiderCamps.splice(ci, 1);
+            const reward = CB?.camp?.destroyReward ?? 100;
+            gameState.gold += reward;
+            setRaidTimer(raidTimer + (CB?.camp?.destroyRaidDelaySec ?? 45));
+            showEventBanner('CAMP DESTROYED!', `+${reward} gold — the next raid is delayed and weakened.`);
+            spawnParticle(camp.x, camp.y, 'puff', 0.6);
+            triggerShake(4);
+            markUIDirty();
+        }
+    }
 }
 
 function chooseRaidDirections(waveNum, waveSize) {
@@ -849,13 +948,17 @@ function resolveRaid() {
             triggerVictory('wave10');
             return;
         }
-        showModal(true, [
+        const lines = [
             `Wave ${waveNum} repelled!`,
             `Raiders slain: ${killsThisWave}`,
             `Buildings lost: ${raidBuildingsDestroyed}`,
             `Citizens slain: ${raidCitizensKilled}`,
             `+${reward} Gold rewarded`,
-        ]);
+        ];
+        if (maybeSpawnRaiderCamp(waveNum)) {
+            lines.push('⚑ Scouts report a raider CAMP nearby — raze it in ATTACK mode!');
+        }
+        showModal(true, lines);
     } else {
         const goldLost = Math.floor(gameState.gold * 0.2);
         gameState.gold = Math.max(0, gameState.gold - goldLost);
@@ -866,6 +969,9 @@ function resolveRaid() {
             `Citizens slain: ${raidCitizensKilled}`,
         ];
         if (goldLost > 0) lines.push(`Gold pillaged: -${goldLost}`);
+        if (maybeSpawnRaiderCamp(waveNum)) {
+            lines.push('⚑ The raiders have built a CAMP nearby — raze it in ATTACK mode!');
+        }
         showModal(false, lines);
     }
     // Proxy marks UI dirty; flushUI() will sync on next frame
@@ -1327,6 +1433,7 @@ function update(dtMs) {
     updateGates(dtSec, _activeRaiders);
     updateArchers(dtSec, _activeRaiders);
     updateKnights(dtSec, _activeRaiders);
+    updateCampAssault(dtSec);
 
     const nextJobScanTimer = jobScanTimer + dtSec;
     if (nextJobScanTimer >= JOB_SCAN_INTERVAL) {
@@ -1810,7 +1917,8 @@ init();
 Object.assign(window, {
     handleGridClick,
     spawnCitizen, trainSoldier, updateSoldiers, trainArcher, updateArchers,
-    trainKnight, updateKnights, updateGates, killRaider, fireArrow, fireBolt,
+    trainKnight, trainCaptain, updateKnights, updateGates, killRaider, fireArrow, fireBolt,
+    maybeSpawnRaiderCamp, updateCampAssault,
     updateActiveProjectiles, _startFireAtTile, _getRaiderType, getRaidWaveSize,
     getScaledWaveSize, showTutorial,
     chooseRaidDirections, getSpawnPos, sendCitizensToHide, startRaidWave,

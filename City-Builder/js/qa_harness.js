@@ -267,11 +267,36 @@ function testRegressionBugs() {
     // Difficulty must actually change raid sizes (raidStrength was previously
     // saved/migrated but never read — Settler and Iron Crown played identically).
     {
+        window.setRaiderCamps([]); // camps would inflate the baseline
         const settlerSize = window.getScaledWaveSize(5, 40);  // settler wave-5 strength
         const lordSize    = window.getScaledWaveSize(5, 48);  // lord baseline
         const ironSize    = window.getScaledWaveSize(5, 60);  // iron crown
         results.difficultyScalesWaves = settlerSize < lordSize && lordSize < ironSize
             && lordSize === (window.RAID_WAVE_SIZES?.[4] ?? 32);
+    }
+
+    // Raider camps: a standing camp strengthens raids, and in ATTACK mode with
+    // no raiders on the field, soldiers grind its HP down.
+    {
+        window.setRaiderCamps([]);
+        const sizeNoCamp = window.getScaledWaveSize(5, 48);
+        const campHp = window.COMBAT_BALANCE?.camp?.hp ?? 300;
+        const camp = { x: 40 * TILE_SIZE + TILE_SIZE / 2, y: 40 * TILE_SIZE + TILE_SIZE / 2, hp: campHp, maxHp: campHp };
+        window.raiderCamps.push(camp);
+        results.campBoostsWaveSize = window.getScaledWaveSize(5, 48) > sizeNoCamp;
+
+        window.raiders.length = 0;
+        window.setRaidActive(false);
+        window.setCombatMode('attack');
+        const assaulter = new window.Soldier(camp.x + TILE_SIZE, camp.y);
+        window.soldiers.push(assaulter);
+        for (let i = 0; i < 5; i++) window.update(200);
+        results.soldiersAssaultCamps = camp.hp < campHp;
+
+        const ai = window.soldiers.indexOf(assaulter);
+        if (ai !== -1) window.soldiers.splice(ai, 1);
+        window.setRaiderCamps([]);
+        window.setCombatMode('defend');
     }
 
     // Task 1 regression: units spawned exactly on top of each other (the

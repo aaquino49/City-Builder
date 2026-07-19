@@ -284,6 +284,10 @@ export const _DIPLOMACY_ACTION_MAP = {
     },
 };
 
+// Diplomacy chain flags — earlier choices set flags here; follow-up events
+// guard on them, so decisions echo later instead of every event being one-off.
+const _dFlags = () => (gameState.diplomacyFlags ??= {});
+
 function scheduleDiplomacyAction(actionKey, delayDays) {
     const action = _DIPLOMACY_ACTION_MAP[actionKey];
     if (!action) {
@@ -329,6 +333,7 @@ const _DIPLOMACY_POOL = [
                 gameState.population++;
                 gameState.gold += 50;
                 scheduleDiplomacyAction('raid', 3);
+                _dFlags().noble_sheltered = true; // chain: noble_return
                 // Proxy marks UI dirty on gold/population writes; flushUI() syncs next frame
             }
         },
@@ -361,7 +366,10 @@ const _DIPLOMACY_POOL = [
         description: 'A warlord to the east demands tribute or he will march on your city.',
         guard: () => true,
         optionA: { label: 'Pay Tribute',      cost: '−100 Gold  No attack',
-            apply: () => { gameState.gold = Math.max(0, gameState.gold - 100); } },
+            apply: () => {
+                gameState.gold = Math.max(0, gameState.gold - 100);
+                _dFlags().tribute_paid = true; // chain: warlord_returns
+            } },
         optionB: { label: 'Refuse',           cost: '+50% Raid in 2 days',
             apply: () => scheduleDiplomacyAction('raid_strong', 2) },
     },
@@ -441,6 +449,7 @@ const _DIPLOMACY_POOL = [
             apply: () => {
                 gameState.food = Math.max(0, gameState.food - 30);
                 gameState.happiness = Math.min(100, gameState.happiness + 20);
+                _dFlags().festival_friend = true; // chain: village_gift
             }
         },
         optionB: { label: 'Decline',          cost: '−8 Happiness',
@@ -470,6 +479,46 @@ const _DIPLOMACY_POOL = [
         },
         optionB: { label: 'Refuse',           cost: '−8 Happiness',
             apply: () => { gameState.happiness = Math.max(0, gameState.happiness - 8); } },
+    },
+    // --- Chain follow-ups (unlocked by earlier choices) ---
+    {
+        id: 'noble_return',
+        description: 'The noble you sheltered has reclaimed his lands, and returns to repay your kindness.',
+        guard: () => _dFlags().noble_sheltered && !_dFlags().noble_returned,
+        optionA: { label: 'Welcome Him',      cost: '+3 Soldiers  +100 Gold',
+            apply: () => {
+                _dFlags().noble_returned = true;
+                const cx = 32.5 * TILE_SIZE, cy = 32.5 * TILE_SIZE;
+                for (let i = 0; i < 3; i++) soldiers.push(new Soldier(cx + (Math.random() - 0.5) * TILE_SIZE, cy + (Math.random() - 0.5) * TILE_SIZE));
+                gameState.gold += 100;
+                window.markUIDirty();
+            }
+        },
+        optionB: { label: 'Ask For Iron',     cost: '+40 Iron',
+            apply: () => { _dFlags().noble_returned = true; gameState.iron += 40; } },
+    },
+    {
+        id: 'warlord_returns',
+        description: 'Emboldened by your earlier tribute, the eastern warlord returns demanding double.',
+        guard: () => _dFlags().tribute_paid && !_dFlags().warlord_resolved,
+        optionA: { label: 'Pay Again',        cost: '−200 Gold  No attack',
+            apply: () => { _dFlags().warlord_resolved = true; gameState.gold = Math.max(0, gameState.gold - 200); } },
+        optionB: { label: 'Never Again',      cost: '+50% Raid in 2 days',
+            apply: () => { _dFlags().warlord_resolved = true; scheduleDiplomacyAction('raid_strong', 2); } },
+    },
+    {
+        id: 'village_gift',
+        description: 'The villages you feasted with send a gift caravan in thanks.',
+        guard: () => _dFlags().festival_friend && !_dFlags().village_thanked,
+        optionA: { label: 'Accept Gladly',    cost: '+40 Food  +40 Wood',
+            apply: () => {
+                _dFlags().village_thanked = true;
+                gameState.food = Math.min(gameState.food + 40, getFoodCap());
+                gameState.wood += 40;
+            }
+        },
+        optionB: { label: 'Share With Folk',  cost: '+10 Happiness',
+            apply: () => { _dFlags().village_thanked = true; gameState.happiness = Math.min(100, gameState.happiness + 10); } },
     },
     {
         id: 'plague_refugees',

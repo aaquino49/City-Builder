@@ -4,6 +4,23 @@
 export let _staticCanvas = null;
 export let _grassCanvas = null;
 
+// Directional facing via horizontal flip — the safe replacement for the removed
+// whole-sprite rotation (which read as characters tipping over). Facing is
+// inferred from the unit's current move target and remembered while idle.
+function _drawFacingSprite(ctx, asset, u, drawX, drawY, size = 16) {
+    if (u.targetX < u.x - 0.5) u._facingLeft = true;
+    else if (u.targetX > u.x + 0.5) u._facingLeft = false;
+    if (u._facingLeft) {
+        ctx.save();
+        ctx.translate(drawX, drawY);
+        ctx.scale(-1, 1);
+        ctx.drawImage(asset, -size / 2, -size / 2, size, size);
+        ctx.restore();
+    } else {
+        ctx.drawImage(asset, drawX - size / 2, drawY - size / 2, size, size);
+    }
+}
+
 export class GameGrid {
     constructor(width = GRID_WIDTH, height = GRID_HEIGHT) {
         this.width = width;
@@ -30,29 +47,60 @@ export class GameGrid {
         return Array.from({ length: this.height }, () => new Array(this.width).fill(null));
     }
 
+    // Trees grow in forest clusters (plus light scatter) instead of a uniform
+    // 5% sprinkle, so each map has distinct wooded regions worth building near.
+    // The starting territory (radius ~6 around center) is kept mostly clear.
     _spawnTrees() {
+        const clusterCount = 5 + Math.floor(Math.random() * 4);
+        for (let c = 0; c < clusterCount; c++) {
+            const ccx = 4 + Math.random() * (this.width - 8);
+            const ccy = 4 + Math.random() * (this.height - 8);
+            const radius = 3 + Math.random() * 5;
+            const r0 = Math.floor(radius);
+            for (let dy = -r0; dy <= r0; dy++) {
+                for (let dx = -r0; dx <= r0; dx++) {
+                    const tx = Math.round(ccx + dx), ty = Math.round(ccy + dy);
+                    if (!this.inBounds(tx, ty)) continue;
+                    if (this.tiles[ty][tx] !== 'tile_grass' || this.structures[ty][tx]) continue;
+                    if (Math.hypot(tx - 32, ty - 32) < 6) continue; // keep the start clear-ish
+                    const dist = Math.hypot(dx, dy);
+                    if (dist > radius) continue;
+                    if (Math.random() < 0.55 * (1 - dist / (radius + 1))) {
+                        this.structures[ty][tx] = { def: TREE_DEF };
+                    }
+                }
+            }
+        }
+        // Light scatter everywhere else so lone trees still dot the map
         for (let ty = 0; ty < this.height; ty++) {
             for (let tx = 0; tx < this.width; tx++) {
-                if (this.tiles[ty][tx] === 'tile_grass' && Math.random() < TREE_SPAWN_CHANCE) {
+                if (this.tiles[ty][tx] === 'tile_grass' && !this.structures[ty][tx] && Math.random() < 0.015) {
                     this.structures[ty][tx] = { def: TREE_DEF };
                 }
             }
         }
     }
 
+    // Stone/iron surface in small veins of 2–5 deposits rather than lone tiles,
+    // making quarry/mine placement a real siting decision.
     _spawnOutcrops() {
-        for (let ty = 0; ty < this.height; ty++) {
-            for (let tx = 0; tx < this.width; tx++) {
-                if (this.tiles[ty][tx] === 'tile_grass' && !this.structures[ty][tx]) {
-                    const r = Math.random();
-                    if (r < STONE_SPAWN_CHANCE) {
-                        this.structures[ty][tx] = { def: STONE_DEP_DEF, hp: 5 };
-                    } else if (r < STONE_SPAWN_CHANCE + IRON_SPAWN_CHANCE) {
-                        this.structures[ty][tx] = { def: IRON_VEIN_DEF, hp: 5 };
+        const spawnVein = (def, veins, minSize, maxSize) => {
+            for (let v = 0; v < veins; v++) {
+                let tx = Math.floor(4 + Math.random() * (this.width - 8));
+                let ty = Math.floor(4 + Math.random() * (this.height - 8));
+                if (Math.hypot(tx - 32, ty - 32) < 5) continue; // not on the town center
+                const size = minSize + Math.floor(Math.random() * (maxSize - minSize + 1));
+                for (let n = 0; n < size; n++) {
+                    if (this.inBounds(tx, ty) && this.tiles[ty][tx] === 'tile_grass' && !this.structures[ty][tx]) {
+                        this.structures[ty][tx] = { def, hp: 5 };
                     }
+                    tx += Math.floor(Math.random() * 3) - 1;
+                    ty += Math.floor(Math.random() * 3) - 1;
                 }
             }
-        }
+        };
+        spawnVein(STONE_DEP_DEF, 8, 2, 5);
+        spawnVein(IRON_VEIN_DEF, 5, 2, 4);
     }
 
     inBounds(tx, ty) {
@@ -275,7 +323,7 @@ export class GameGrid {
                 ctx.globalAlpha = 0.85;
                 if (citizenAsset) {
                     ctx.globalCompositeOperation = 'source-over';
-                    ctx.drawImage(citizenAsset, drawX - 8, drawY - 8, 16, 16);
+                    _drawFacingSprite(ctx, citizenAsset, c, drawX, drawY);
                     ctx.fillStyle = 'rgba(200,30,30,0.55)';
                     ctx.beginPath(); ctx.arc(drawX, drawY, 8, 0, Math.PI * 2); ctx.fill();
                 } else {
@@ -284,7 +332,7 @@ export class GameGrid {
                 }
                 ctx.globalAlpha = 1.0;
             } else if (citizenAsset) {
-                ctx.drawImage(citizenAsset, drawX - 8, drawY - 8, 16, 16);
+                _drawFacingSprite(ctx, citizenAsset, c, drawX, drawY);
             } else {
                 ctx.fillStyle = '#ffdd57';
                 ctx.beginPath();
@@ -1109,6 +1157,7 @@ const BUILD_ITEMS = [
     { key: 'train_soldier',  name: 'Train Soldier',  cat: 'military', yields: '+5 DEF',         assetKey: 'citizen_soldier' },
     { key: 'train_archer',   name: 'Train Archer',   cat: 'military', yields: 'Ranged unit',    assetKey: 'citizen_archer' },
     { key: 'train_knight',   name: 'Train Knight',   cat: 'military', yields: 'Heavy unit',     assetKey: 'citizen_knight' },
+    { key: 'train_captain',  name: 'Train Captain',  cat: 'military', yields: 'Aura +25% dmg',  assetKey: 'citizen_soldier' },
     { key: 'demolish',       name: 'Demolish',       cat: '_always',  yields: 'Refund 50%',     assetKey: null },
 ];
 
@@ -1134,6 +1183,7 @@ function renderBuildMenu(tab) {
             train_soldier: [soldierCost,0,0,0],
             train_archer: [UB?.archer?.goldCost ?? 40,0,0,0],
             train_knight: [UB?.knight?.goldCost ?? 60,0,UB?.knight?.ironCost ?? 20,0],
+            train_captain: [UB?.captain?.goldCost ?? 150,0,UB?.captain?.ironCost ?? 30,0],
         };
         let cost, woodCost, ironCost, stoneCost;
         if (def) {
@@ -1228,6 +1278,19 @@ function updateBuildMenu() {
             const c = !(gameState.gold >= kGold && gameState.iron >= kIron && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
             btn.disabled = c; btn.classList.toggle('disabled', c); return;
         }
+        if (tool === 'train_captain') {
+            const cGold = window.UNIT_BALANCE?.captain?.goldCost ?? 150;
+            const cIron = window.UNIT_BALANCE?.captain?.ironCost ?? 30;
+            const hasCaptain = soldiers.some(s => s.isCaptain);
+            const c = hasCaptain || !(gameState.gold >= cGold && gameState.iron >= cIron && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
+            btn.disabled = c; btn.classList.toggle('disabled', c);
+            const yieldEl = btn.querySelector('.build-item-yield');
+            if (yieldEl) {
+                const label = hasCaptain ? '✓ Commissioned' : 'Aura +25% dmg';
+                if (yieldEl.textContent !== label) yieldEl.textContent = label;
+            }
+            return;
+        }
         const def = BUILDINGS[tool];
         if (!def) return;
         const cost = getScaledCost(tool);
@@ -1269,6 +1332,7 @@ document.getElementById('build-items').addEventListener('click', e => {
     if (tool === 'train_soldier') { trainSoldier(); return; }
     if (tool === 'train_archer')  { trainArcher();  return; }
     if (tool === 'train_knight')  { trainKnight();  return; }
+    if (tool === 'train_captain') { window.trainCaptain?.(); return; }
     gameState.selectedTool = gameState.selectedTool === tool ? null : tool;
     updateBuildMenu();
 });
@@ -1424,7 +1488,15 @@ export function renderWorldOverlay() {
         if (!isVisibleUnit(sol)) continue;
         if (renderedSoldiers++ >= 200) break;
         if (soldierAsset) {
-            ctx.drawImage(soldierAsset, sol.x - 8, sol.y - 8, 16, 16);
+            if (sol.isCaptain) {
+                // Captain: larger sprite with a gold command ring
+                ctx.strokeStyle = '#ffd700';
+                ctx.lineWidth = 1.5 / zoom;
+                ctx.beginPath(); ctx.arc(sol.x, sol.y, 11, 0, Math.PI * 2); ctx.stroke();
+                _drawFacingSprite(ctx, soldierAsset, sol, sol.x, sol.y, 20);
+            } else {
+                _drawFacingSprite(ctx, soldierAsset, sol, sol.x, sol.y);
+            }
         } else {
             ctx.fillStyle = '#1a3a6a';
             ctx.beginPath(); ctx.arc(sol.x, sol.y, 6, 0, Math.PI * 2); ctx.fill();
@@ -1447,7 +1519,7 @@ export function renderWorldOverlay() {
         if (!isVisibleUnit(a)) continue;
         if (renderedArchers++ >= 150) break;
         if (archerAsset) {
-            ctx.drawImage(archerAsset, a.x - 8, a.y - 8, 16, 16);
+            _drawFacingSprite(ctx, archerAsset, a, a.x, a.y);
         } else {
             ctx.fillStyle = '#00ccaa';
             ctx.beginPath(); ctx.arc(a.x, a.y, 5, 0, Math.PI * 2); ctx.fill();
@@ -1467,7 +1539,7 @@ export function renderWorldOverlay() {
         if (!isVisibleUnit(k)) continue;
         if (renderedKnights++ >= 100) break;
         if (knightAsset) {
-            ctx.drawImage(knightAsset, k.x - 8, k.y - 8, 16, 16);
+            _drawFacingSprite(ctx, knightAsset, k, k.x, k.y);
         } else {
             ctx.fillStyle = '#cc8800';
             ctx.beginPath(); ctx.arc(k.x, k.y, 6, 0, Math.PI * 2); ctx.fill();
@@ -1562,6 +1634,36 @@ export function renderWorldOverlay() {
         }
     }
 
+    // Raider camps — tents beyond the border; razing them is ATTACK mode's job
+    for (const camp of (window.raiderCamps || [])) {
+        if (camp.x < viewMinX || camp.x > viewMaxX || camp.y < viewMinY || camp.y > viewMaxY) continue;
+        ctx.fillStyle = '#4a2c1a';
+        ctx.beginPath();
+        ctx.moveTo(camp.x, camp.y - 13);
+        ctx.lineTo(camp.x + 12, camp.y + 8);
+        ctx.lineTo(camp.x - 12, camp.y + 8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = '#2a180c';
+        ctx.lineWidth = 1.5 / zoom;
+        ctx.stroke();
+        ctx.fillStyle = '#20120a';
+        ctx.fillRect(camp.x - 3, camp.y - 1, 6, 9); // entrance
+        // banner pole + flag
+        ctx.strokeStyle = '#332211';
+        ctx.beginPath(); ctx.moveTo(camp.x + 10, camp.y - 18); ctx.lineTo(camp.x + 10, camp.y + 2); ctx.stroke();
+        ctx.fillStyle = '#cc2222';
+        ctx.fillRect(camp.x + 10, camp.y - 18, 9, 5);
+        // HP bar when damaged
+        if (camp.hp < camp.maxHp) {
+            const bw = 26;
+            ctx.fillStyle = '#333333';
+            ctx.fillRect(camp.x - bw / 2, camp.y - 22, bw, 3);
+            ctx.fillStyle = '#ff4444';
+            ctx.fillRect(camp.x - bw / 2, camp.y - 22, bw * Math.max(0, camp.hp / camp.maxHp), 3);
+        }
+    }
+
     let renderedRaiders = 0;
     for (const r of raiders) {
         if (!isVisibleUnit(r)) continue;
@@ -1585,6 +1687,11 @@ export function renderWorldOverlay() {
             ctx.stroke();
         }
         if (raiderAsset) {
+            // Facing flip inside the (translated) raider frame; the victory
+            // spin (rotation above) composes with it naturally.
+            if (r.targetX < r.x - 0.5) r._facingLeft = true;
+            else if (r.targetX > r.x + 0.5) r._facingLeft = false;
+            if (r._facingLeft) ctx.scale(-1, 1);
             ctx.drawImage(raiderAsset, -8, -8, 16, 16);
         } else {
             ctx.fillStyle = '#ff0000';
