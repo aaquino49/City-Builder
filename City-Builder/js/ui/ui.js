@@ -1,3 +1,7 @@
+import {
+    sim,
+} from '../core/state.js';
+
 // Pixel Dominion — UI & Renderer Module
 
 // ===================== GAME GRID CLASS =====================
@@ -438,13 +442,13 @@ export class GameGrid {
 
 // ===================== TECH & RESEARCH UI =====================
 export function openResearchModal() {
-    window.setGameIsPaused(true);
+    sim.gameIsPaused = true;
     updateResearchModalUI();
     document.getElementById('research-modal').classList.add('open');
 }
 
 function closeResearchModal() {
-    window.setGameIsPaused(false);
+    sim.gameIsPaused = false;
     document.getElementById('research-modal').classList.remove('open');
 }
 // Single source of truth for research entries: name, description, costs, and
@@ -572,9 +576,9 @@ function updateResearch(dtSec) {
 
 function applyUpgradeEffects(key) {
     if (key === 'reinforced_masonry') {
-        for (let ty = 0; ty < grid.height; ty++) {
-            for (let tx = 0; tx < grid.width; tx++) {
-                const s = grid.structures[ty][tx];
+        for (let ty = 0; ty < sim.grid.height; ty++) {
+            for (let tx = 0; tx < sim.grid.width; tx++) {
+                const s = sim.grid.structures[ty][tx];
                 if (s) {
                     if (s.def.key === 'wall') {
                         s.hp = (s.hp ?? 100) + 100;
@@ -612,12 +616,12 @@ export function showDiplomacyModal(event) {
 }
 
 function chooseDiplomacyOption(opt) {
-    if (!incidentManager || !incidentManager.active || incidentManager.active.type !== 'diplomacy') return;
-    const event = incidentManager.active.event;
+    if (!sim.incidentManager || !sim.incidentManager.active || sim.incidentManager.active.type !== 'diplomacy') return;
+    const event = sim.incidentManager.active.event;
     const choice = opt === 'A' ? event.optionA : event.optionB;
     choice.apply();
-    incidentManager._endIncident();
-    window.setGameIsPaused(false);
+    sim.incidentManager._endIncident();
+    sim.gameIsPaused = false;
     const modal = document.getElementById('diplomacy-modal');
     if (modal) modal.classList.remove('open');
     refreshUI();
@@ -625,31 +629,31 @@ function chooseDiplomacyOption(opt) {
 
 // ===================== BUILDING CLICK PANELS =====================
 export function closeBuildingPanel() {
-    _buildingPanelOpen = false;
+    sim.buildingPanelOpen = false;
     const panel = document.getElementById('building-panel');
     if (panel) panel.classList.remove('open');
 }
 
 function openBuildingPanel(tx, ty) {
-    let s = grid.structures[ty]?.[tx];
+    let s = sim.grid.structures[ty]?.[tx];
     if (!s) return;
     if (s.isChild) {
         tx = s.parentX;
         ty = s.parentY;
-        s = grid.structures[ty]?.[tx];
+        s = sim.grid.structures[ty]?.[tx];
     }
     if (!s || !BUILDINGS[s.def.key]) return;
 
     const panel = document.getElementById('building-panel');
     if (!panel) return;
 
-    _buildingPanelTX = tx;
-    _buildingPanelTY = ty;
-    _buildingPanelOpen = true;
+    sim.buildingPanelTX = tx;
+    sim.buildingPanelTY = ty;
+    sim.buildingPanelOpen = true;
 
     const bKey = s.def.key;
     const k2 = `${tx},${ty}`;
-    const isT2 = !!_tier2Upgrades[k2];
+    const isT2 = !!sim.tier2Upgrades[k2];
     const seasonIdx = SEASONS.indexOf(gameState.season);
 
     document.getElementById('building-panel-name').textContent = BUILDINGS[bKey]?.label || bKey;
@@ -692,7 +696,7 @@ function openBuildingPanel(tx, ty) {
     } else if (bKey === 'granary') {
         statsLines.push(`Food cap: +${isT2 ? 350 : 200}`);
     } else if (bKey === 'barracks') {
-        const solCost = Math.round((window.UNIT_BALANCE?.soldier?.goldCost ?? 40) * (window._soldierCostMult || 1));
+        const solCost = Math.round((window.UNIT_BALANCE?.soldier?.goldCost ?? 40) * (sim.soldierCostMult || 1));
         statsLines.push(`Trains soldiers (${solCost}G)`);
         statsLines.push(`Soldier HP: ${isT2 ? 125 : 100}`);
     } else if (bKey === 'tower') {
@@ -719,8 +723,8 @@ function openBuildingPanel(tx, ty) {
         upgradeBtn.disabled = false;
         upgradeBtn.classList.remove('hidden', 'panel-btn-upgraded');
         upgradeBtn.onclick = () => {
-            const ptx = _buildingPanelTX, pty = _buildingPanelTY;
-            const cfg = TIER2_UPGRADES[grid.structures[pty]?.[ptx]?.def.key];
+            const ptx = sim.buildingPanelTX, pty = sim.buildingPanelTY;
+            const cfg = TIER2_UPGRADES[sim.grid.structures[pty]?.[ptx]?.def.key];
             if (!cfg) return;
             if (gameState.gold < cfg.goldCost || gameState.wood < cfg.woodCost || gameState.stone < cfg.stoneCost) {
                 spawnFloat(ptx * TILE_SIZE + TILE_SIZE / 2, pty * TILE_SIZE, 'Insufficient resources!', '#ff4444', 1.2);
@@ -729,7 +733,7 @@ function openBuildingPanel(tx, ty) {
             gameState.gold  -= cfg.goldCost;
             gameState.wood  -= cfg.woodCost;
             gameState.stone -= cfg.stoneCost;
-            _tier2Upgrades[`${ptx},${pty}`] = true;
+            sim.tier2Upgrades[`${ptx},${pty}`] = true;
             rebuildStructureLists();
             refreshUI();
             flashAutosave();
@@ -747,8 +751,8 @@ function openBuildingPanel(tx, ty) {
 
     const demolishBtn = document.getElementById('building-panel-demolish');
     demolishBtn.onclick = () => {
-        const ptx = _buildingPanelTX, pty = _buildingPanelTY;
-        const ds = grid.structures[pty]?.[ptx];
+        const ptx = sim.buildingPanelTX, pty = sim.buildingPanelTY;
+        const ds = sim.grid.structures[pty]?.[ptx];
         closeBuildingPanel();
         if (ds && BUILDINGS[ds.def.key]) {
             const dw = ds.def.width || 1;
@@ -757,9 +761,9 @@ function openBuildingPanel(tx, ty) {
             if (ds.def.key === 'house') gameState.housesBuilt = Math.max(0, (gameState.housesBuilt || 0) - 1);
             else if (ds.def.key === 'farm') gameState.farmsBuilt = Math.max(0, (gameState.farmsBuilt || 0) - 1);
             gameState.housing = Math.max(0, gameState.housing - (ds.def.housing || 0));
-            delete _tier2Upgrades[`${ptx},${pty}`];
-            grid.demolish(ptx, pty);
-            grid.structures[pty][ptx] = { def: RUBBLE_DEF, decayTimer: DAY_DURATION };
+            delete sim.tier2Upgrades[`${ptx},${pty}`];
+            sim.grid.demolish(ptx, pty);
+            sim.grid.structures[pty][ptx] = { def: RUBBLE_DEF, decayTimer: DAY_DURATION };
             playDemolishSFX();
             patchStaticCache(ptx, pty, dw, dh);
             rebuildStructureLists();
@@ -771,8 +775,8 @@ function openBuildingPanel(tx, ty) {
     const rect = canvas.getBoundingClientRect();
     const scaleX = rect.width  / canvas.width;
     const scaleY = rect.height / canvas.height;
-    const canvasPxX = (tx * TILE_SIZE + TILE_SIZE) * camera.zoom - camera.x * camera.zoom;
-    const canvasPxY = (ty * TILE_SIZE)             * camera.zoom - camera.y * camera.zoom;
+    const canvasPxX = (tx * TILE_SIZE + TILE_SIZE) * sim.camera.zoom - sim.camera.x * sim.camera.zoom;
+    const canvasPxY = (ty * TILE_SIZE)             * sim.camera.zoom - sim.camera.y * sim.camera.zoom;
     const viewX = rect.left + canvasPxX * scaleX + 8;
     const viewY = rect.top  + canvasPxY * scaleY;
 
@@ -875,7 +879,7 @@ export function calculateCurrentScore() {
 
 export function triggerVictory(reason = 'default') {
     gameState.victoryAchieved = true; // guard: never re-trigger per frame
-    window.setGameIsPaused(true);
+    sim.gameIsPaused = true;
     playVictorySFX();
     // Victory offers CONTINUE REIGN (endless mode)
     document.getElementById('game-over-continue')?.classList.remove('hidden');
@@ -941,7 +945,7 @@ export function triggerVictory(reason = 'default') {
 }
 
 function triggerDefeat() {
-    window.setGameIsPaused(true);
+    sim.gameIsPaused = true;
     playDefeatSFX();
     // No continuing from a total collapse
     document.getElementById('game-over-continue')?.classList.add('hidden');
@@ -1012,37 +1016,37 @@ function _hudClass(id, cls, on) {
 export function updateRaidHUD() {
     const finalRaidWave = window.FINAL_RAID_WAVE ?? 10;
     const endless = !!window.gameState?.endless;
-    const waveNum = endless ? (window.raidCount ?? 0) + 1 : Math.min((window.raidCount ?? 0) + 1, finalRaidWave);
+    const waveNum = endless ? (sim.raidCount ?? 0) + 1 : Math.min((sim.raidCount ?? 0) + 1, finalRaidWave);
     _hudText('raid-wave-indicator', endless
         ? `WAVE ${waveNum}/∞`
         : `WAVE ${waveNum}/${finalRaidWave}${waveNum === finalRaidWave ? ' FINAL' : ''}`);
-    if (raidActive) {
-        _hudText('res-raid-timer', formatTime(raidActiveTimer));
+    if (sim.raidActive) {
+        _hudText('res-raid-timer', formatTime(sim.raidActiveTimer));
         _hudText('raid-eyebrow', '⚔ RAID ⚔');
         _hudClass('raid-warning', 'active', true);
         _hudClass('raid-scroll', 'warning', true);
-    } else if (_scoutPhase) {
-        _hudText('res-raid-timer', formatTime(_scoutTimer));
+    } else if (sim.scoutPhase) {
+        _hudText('res-raid-timer', formatTime(sim.scoutTimer));
         _hudClass('raid-warning', 'active', true);
         _hudClass('raid-scroll', 'warning', true);
         _hudText('raid-eyebrow', '⚑ SCOUTS SPOTTED ⚑');
-    } else if (window._raidQueued) {
+    } else if (sim.raidQueued) {
         // Queued for dusk — live countdown to dusk (dayTimer 42) instead of a
         // frozen 00:00, so the player can see the raid is still coming.
-        _hudText('res-raid-timer', formatTime(Math.max(0, 42 - (window.dayTimer ?? 0))));
+        _hudText('res-raid-timer', formatTime(Math.max(0, 42 - (sim.dayTimer ?? 0))));
         _hudClass('raid-warning', 'active', true);
         _hudClass('raid-scroll', 'warning', true);
         _hudText('raid-eyebrow', '⚑ RAID AT DUSK ⚑');
     } else {
-        _hudText('res-raid-timer', formatTime(raidTimer));
-        const isWarn = !gameIsPaused && raidTimer <= 30 && raidTimer > 0;
+        _hudText('res-raid-timer', formatTime(sim.raidTimer));
+        const isWarn = !sim.gameIsPaused && sim.raidTimer <= 30 && sim.raidTimer > 0;
         _hudClass('raid-warning', 'active', isWarn);
         _hudClass('raid-scroll', 'warning', isWarn);
         _hudText('raid-eyebrow', isWarn ? '⚔ RAID APPROACHES ⚔' : 'NEXT RAID');
         if (isWarn) {
-            if (!raidWarningPlayed) { window.setRaidWarningPlayed(true); playRaidWarningSFX(); }
+            if (!sim.raidWarningPlayed) { sim.raidWarningPlayed = true; playRaidWarningSFX(); }
         } else {
-            if (raidTimer > 30 || raidTimer <= 0) window.setRaidWarningPlayed(false);
+            if (sim.raidTimer > 30 || sim.raidTimer <= 0) sim.raidWarningPlayed = false;
         }
     }
 }
@@ -1050,7 +1054,7 @@ export function updateRaidHUD() {
 
 // ===================== GENERIC MODAL =====================
 export function showModal(isVictory, lines) {
-    window.setGameIsPaused(true);
+    sim.gameIsPaused = true;
     const sealEl     = document.getElementById('raid-seal');
     const titleEl    = document.getElementById('modal-title');
     const subtitleEl = document.getElementById('raid-subtitle');
@@ -1080,17 +1084,17 @@ export function updateTimePauseUI() {
     const pauseOverlay = document.getElementById('pause-overlay');
     const btnPause = document.getElementById('btn-pause');
     const btnDbl = document.getElementById('btn-doubletime');
-    if (pauseOverlay) pauseOverlay.classList.toggle('active', userPaused);
-    if (btnPause) { btnPause.textContent = userPaused ? '▶' : '⏸'; btnPause.classList.toggle('active', userPaused); }
-    if (btnDbl) btnDbl.classList.toggle('active', timeScale === 2);
+    if (pauseOverlay) pauseOverlay.classList.toggle('active', sim.userPaused);
+    if (btnPause) { btnPause.textContent = sim.userPaused ? '▶' : '⏸'; btnPause.classList.toggle('active', sim.userPaused); }
+    if (btnDbl) btnDbl.classList.toggle('active', sim.timeScale === 2);
 }
 document.getElementById('btn-pause').addEventListener('click', () => {
-    if (!gameState.started || gameIsPaused) return;
-    window.setUserPaused(!window.userPaused);
+    if (!gameState.started || sim.gameIsPaused) return;
+    sim.userPaused = !sim.userPaused;
     updateTimePauseUI();
 });
 document.getElementById('btn-doubletime').addEventListener('click', () => {
-    window.setTimeScale(window.timeScale === 2 ? 1 : 2);
+    sim.timeScale = sim.timeScale === 2 ? 1 : 2;
     updateTimePauseUI();
 });
 
@@ -1177,7 +1181,7 @@ function renderBuildMenu(tab) {
     itemsEl.innerHTML = visible.map(item => {
         const def = BUILDINGS[item.key];
         const UB = window.UNIT_BALANCE;
-        const soldierCost = Math.round((UB?.soldier?.goldCost ?? 40) * (window._soldierCostMult || 1));
+        const soldierCost = Math.round((UB?.soldier?.goldCost ?? 40) * (sim.soldierCostMult || 1));
         const specialCosts = {
             clear: [10,0,0,0], clear_rubble: [15,0,0,0], road: [ROAD_COST,0,0,0], demolish: [0,0,0,0],
             train_soldier: [soldierCost,0,0,0],
@@ -1207,10 +1211,10 @@ function renderBuildMenu(tab) {
     }).join('');
     itemsEl.querySelectorAll('canvas[data-asset]').forEach(cv => {
         const key = cv.dataset.asset;
-        if (!key || !assets[key]) return;
+        if (!key || !sim.assets[key]) return;
         const ctx2 = cv.getContext('2d');
         ctx2.imageSmoothingEnabled = false;
-        ctx2.drawImage(assets[key], 0, 0, 28, 28);
+        ctx2.drawImage(sim.assets[key], 0, 0, 28, 28);
     });
     updateBuildMenu();
 }
@@ -1219,7 +1223,7 @@ export function updateCombatModeUI() {
     const defendBtn = document.getElementById('btn-defend-mode');
     const attackBtn = document.getElementById('btn-attack-mode');
     if (!defendBtn || !attackBtn) return;
-    const mode = window._combatMode || 'defend';
+    const mode = sim.combatMode || 'defend';
     defendBtn.classList.toggle('active', mode === 'defend');
     attackBtn.classList.toggle('active', mode === 'attack');
     defendBtn.setAttribute('aria-pressed', mode === 'defend' ? 'true' : 'false');
@@ -1230,7 +1234,7 @@ export function _updateDayPhaseGlyph() {
     const el = document.getElementById('day-phase-glyph');
     if (!el) return;
     const data = { dawn: { g: '🌅', c: '#f4a460' }, day: { g: '☀', c: '#ffd700' }, dusk: { g: '🌇', c: '#ff8c00' }, night: { g: '🌙', c: '#aaaaff' } };
-    const d = data[_dayPhase];
+    const d = data[sim.dayPhase];
     if (d) { el.textContent = d.g; el.style.color = d.c; }
 }
 
@@ -1258,7 +1262,7 @@ function updateBuildMenu() {
             // Cost reflects the diplomacy soldier-price penalty (_soldierCostMult);
             // previously the button enabled at 40G while trainSoldier() silently
             // required 60G during the penalty.
-            const solCost = Math.round((window.UNIT_BALANCE?.soldier?.goldCost ?? 40) * (window._soldierCostMult || 1));
+            const solCost = Math.round((window.UNIT_BALANCE?.soldier?.goldCost ?? 40) * (sim.soldierCostMult || 1));
             const costsEl = btn.querySelector('.build-item-costs');
             if (costsEl) {
                 const html = `<span class="build-cost-gold">◈ ${solCost}</span>`;
@@ -1347,7 +1351,7 @@ document.getElementById('build-tabs').addEventListener('click', e => {
 
 // ===================== GRASS RENDERING =====================
 export function _buildGrassCache() {
-    const W = grid.width, H = grid.height, T = TILE_SIZE;
+    const W = sim.grid.width, H = sim.grid.height, T = TILE_SIZE;
     const oc = document.createElement('canvas');
     oc.width = W * T;
     oc.height = H * T;
@@ -1355,7 +1359,7 @@ export function _buildGrassCache() {
     octx.imageSmoothingEnabled = false;
     for (let ty = 0; ty < H; ty++) {
         for (let tx = 0; tx < W; tx++) {
-            if (grid.tiles[ty][tx] !== 'tile_grass') continue;
+            if (sim.grid.tiles[ty][tx] !== 'tile_grass') continue;
             const r = seededRand(tx * 1000 + ty);
             octx.fillStyle = r() < 0.5 ? '#5e8a3e' : '#658f44';
             octx.fillRect(tx * T, ty * T, T, T);
@@ -1392,7 +1396,7 @@ function _getGlowSprite() {
 
 export function renderWorldOverlay() {
     if (!gameState.started) return;
-    const { x: camX, y: camY, zoom } = camera;
+    const { x: camX, y: camY, zoom } = sim.camera;
     const viewMinX = camX - TILE_SIZE;
     const viewMinY = camY - TILE_SIZE;
     const viewMaxX = camX + canvas.width / zoom + TILE_SIZE;
@@ -1428,8 +1432,8 @@ export function renderWorldOverlay() {
     }
 
     // Gate HP bars (when damaged)
-    for (const { tx, ty } of window.activeGates) {
-        const s = grid.structures[ty][tx];
+    for (const { tx, ty } of sim.activeGates) {
+        const s = sim.grid.structures[ty][tx];
         const maxHp = getMaxHP('gate');
         if (!s || (s.hp ?? maxHp) >= maxHp) continue;
         const gx = tx * TILE_SIZE + TILE_SIZE / 2;
@@ -1482,7 +1486,7 @@ export function renderWorldOverlay() {
     }
     ctx.globalAlpha = 1.0;
 
-    const soldierAsset = assets['citizen_soldier'];
+    const soldierAsset = sim.assets['citizen_soldier'];
     let renderedSoldiers = 0;
     for (const sol of soldiers) {
         if (!isVisibleUnit(sol)) continue;
@@ -1513,7 +1517,7 @@ export function renderWorldOverlay() {
         }
     }
 
-    const archerAsset = assets['citizen_archer'];
+    const archerAsset = sim.assets['citizen_archer'];
     let renderedArchers = 0;
     for (const a of archers) {
         if (!isVisibleUnit(a)) continue;
@@ -1533,7 +1537,7 @@ export function renderWorldOverlay() {
         }
     }
 
-    const knightAsset = assets['citizen_knight'];
+    const knightAsset = sim.assets['citizen_knight'];
     let renderedKnights = 0;
     for (const k of knights) {
         if (!isVisibleUnit(k)) continue;
@@ -1556,10 +1560,10 @@ export function renderWorldOverlay() {
     }
 
     // Fire overlay
-    if (incidentManager?.active?.type === 'fire') {
-        const fireAsset = assets['effect_fire'];
+    if (sim.incidentManager?.active?.type === 'fire') {
+        const fireAsset = sim.assets['effect_fire'];
         const flicker = 0.75 + Math.sin(Date.now() / 100) * 0.25;
-        for (const fire of incidentManager.active.fires) {
+        for (const fire of sim.incidentManager.active.fires) {
             const fx = fire.tx * TILE_SIZE, fy = fire.ty * TILE_SIZE;
             ctx.globalAlpha = flicker;
             if (fireAsset) {
@@ -1576,11 +1580,11 @@ export function renderWorldOverlay() {
     }
 
     // Drought overlay on farms using activeFarms
-    if (droughtActive) {
-        const droughtAsset = assets['effect_drought'];
-        for (const farm of window.activeFarms) {
+    if (sim.droughtActive) {
+        const droughtAsset = sim.assets['effect_drought'];
+        for (const farm of sim.activeFarms) {
             const { tx, ty } = farm;
-            const s = grid.structures[ty]?.[tx];
+            const s = sim.grid.structures[ty]?.[tx];
             if (!s || s.def.key !== 'farm') continue;
             ctx.globalAlpha = 0.65;
             if (droughtAsset) {
@@ -1596,11 +1600,11 @@ export function renderWorldOverlay() {
     // Unstaffed-workplace badges — a "!" over completed farms/lumberyards/
     // quarries/mines with zero assigned workers (suppressed during raids when
     // everyone is hiding, which would flag every workplace at once).
-    if (!raidActive && !_scoutPhase && window.jobfulStructures?.length) {
+    if (!sim.raidActive && !sim.scoutPhase && sim.jobfulStructures?.length) {
         const _staffJobKeys = { farm: 'farmer', lumberyard: 'woodcutter', quarry: 'stone_miner', mine: 'iron_miner' };
         const staffed = new Set();
         for (const c of citizens) {
-            if (c._workTX >= 0 && _staffJobKeys[grid.structures[c._workTY]?.[c._workTX]?.def?.key] === c.job) {
+            if (c._workTX >= 0 && _staffJobKeys[sim.grid.structures[c._workTY]?.[c._workTX]?.def?.key] === c.job) {
                 staffed.add(c._workTX + ',' + c._workTY);
             }
         }
@@ -1609,8 +1613,8 @@ export function renderWorldOverlay() {
         ctx.lineWidth = 3 / zoom;
         ctx.strokeStyle = '#000';
         ctx.fillStyle = '#ffdd57';
-        for (const { tx, ty } of window.jobfulStructures) {
-            const s = grid.structures[ty]?.[tx];
+        for (const { tx, ty } of sim.jobfulStructures) {
+            const s = sim.grid.structures[ty]?.[tx];
             if (!s || (s.progress ?? 1.0) < 1.0) continue;
             if (staffed.has(tx + ',' + ty)) continue;
             const bx = tx * TILE_SIZE + TILE_SIZE / 2;
@@ -1622,20 +1626,20 @@ export function renderWorldOverlay() {
     }
 
     // Merchant NPC
-    if (merchantNPC && merchantNPC.state !== 'done') {
-        const merchantAsset = assets['npc_merchant'];
+    if (sim.merchantNPC && sim.merchantNPC.state !== 'done') {
+        const merchantAsset = sim.assets['npc_merchant'];
         if (merchantAsset) {
-            ctx.drawImage(merchantAsset, merchantNPC.x - 8, merchantNPC.y - 8, 16, 16);
+            ctx.drawImage(merchantAsset, sim.merchantNPC.x - 8, sim.merchantNPC.y - 8, 16, 16);
         } else {
             ctx.fillStyle = '#cc8844';
-            ctx.fillRect(merchantNPC.x - 8, merchantNPC.y - 8, 16, 16);
-            ctx.strokeStyle = '#eecc77'; ctx.lineWidth = 1 / camera.zoom;
-            ctx.strokeRect(merchantNPC.x - 8, merchantNPC.y - 8, 16, 16);
+            ctx.fillRect(sim.merchantNPC.x - 8, sim.merchantNPC.y - 8, 16, 16);
+            ctx.strokeStyle = '#eecc77'; ctx.lineWidth = 1 / sim.camera.zoom;
+            ctx.strokeRect(sim.merchantNPC.x - 8, sim.merchantNPC.y - 8, 16, 16);
         }
     }
 
     // Raider camps — tents beyond the border; razing them is ATTACK mode's job
-    for (const camp of (window.raiderCamps || [])) {
+    for (const camp of (sim.raiderCamps || [])) {
         if (camp.x < viewMinX || camp.x > viewMaxX || camp.y < viewMinY || camp.y > viewMaxY) continue;
         ctx.fillStyle = '#4a2c1a';
         ctx.beginPath();
@@ -1669,9 +1673,9 @@ export function renderWorldOverlay() {
         if (!isVisibleUnit(r)) continue;
         // Cap covers the largest endless-mode wave so fighting units are never invisible
         if (renderedRaiders++ >= 260) break;
-        const raiderAsset = r.type === 'torch' ? assets['enemy_torch_raider']
-                          : r.type === 'siege' ? assets['enemy_siege_raider']
-                          : assets['enemy_raider'];
+        const raiderAsset = r.type === 'torch' ? sim.assets['enemy_torch_raider']
+                          : r.type === 'siege' ? sim.assets['enemy_siege_raider']
+                          : sim.assets['enemy_raider'];
         ctx.save();
         ctx.globalAlpha = r._alpha;
         ctx.translate(r.x, r.y);
@@ -1720,24 +1724,24 @@ function render() {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const hoverTile = grid.screenToGrid(mouseScreenX, mouseScreenY);
-    const savedCamX = camera.x, savedCamY = camera.y;
-    camera.x += _shakeX; camera.y += _shakeY;
-    grid.render(ctx, assets, { hoverTile, selectedTool: gameState.selectedTool, buildings: ALL_DEFS, citizens });
+    const hoverTile = sim.grid.screenToGrid(sim.mouseScreenX, sim.mouseScreenY);
+    const savedCamX = sim.camera.x, savedCamY = sim.camera.y;
+    sim.camera.x += sim.shakeX; sim.camera.y += sim.shakeY;
+    sim.grid.render(ctx, sim.assets, { hoverTile, selectedTool: gameState.selectedTool, buildings: ALL_DEFS, citizens });
     renderWorldOverlay();
-    camera.x = savedCamX; camera.y = savedCamY;
+    sim.camera.x = savedCamX; sim.camera.y = savedCamY;
 
     // Torch glow — pre-rendered glow sprite drawn additively on towers/gates during
     // dusk/night (replaces a per-tower per-frame createRadialGradient allocation).
-    if ((_dayPhase === 'night' || _dayPhase === 'dusk') && (_overlayAlpha > 0.01)) {
-        const _glowScale = _dayPhase === 'dusk' ? 0.5 : 1.0;
-        const { zoom } = camera;
+    if ((sim.dayPhase === 'night' || sim.dayPhase === 'dusk') && (sim.overlayAlpha > 0.01)) {
+        const _glowScale = sim.dayPhase === 'dusk' ? 0.5 : 1.0;
+        const { zoom } = sim.camera;
         const camX = savedCamX, camY = savedCamY;
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalCompositeOperation = 'lighter';
         ctx.globalAlpha = _glowScale;
         const glow = _getGlowSprite();
-        for (const list of [window.activeTowers, window.activeGates]) {
+        for (const list of [sim.activeTowers, sim.activeGates]) {
             for (const { tx, ty } of list) {
                 const sx = (tx * TILE_SIZE + TILE_SIZE / 2) * zoom - camX * zoom;
                 const sy = (ty * TILE_SIZE + TILE_SIZE / 2) * zoom - camY * zoom;
@@ -1749,11 +1753,11 @@ function render() {
     }
 
     // Darkness overlay — screen-space tinted fillRect, alpha lerped in update()
-    if (_overlayAlpha > 0.001) {
-        const _phaseColor = { dawn: '0,0,40', day: null, dusk: '255,100,0', night: '0,0,20' }[_dayPhase];
+    if (sim.overlayAlpha > 0.001) {
+        const _phaseColor = { dawn: '0,0,40', day: null, dusk: '255,100,0', night: '0,0,20' }[sim.dayPhase];
         if (_phaseColor) {
             ctx.setTransform(1, 0, 0, 1, 0, 0);
-            ctx.fillStyle = `rgba(${_phaseColor},${_overlayAlpha})`;
+            ctx.fillStyle = `rgba(${_phaseColor},${sim.overlayAlpha})`;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
     }
@@ -1761,14 +1765,14 @@ function render() {
     // Off-screen raid indicators — red arrows at the screen edge pointing toward
     // raider groups the camera can't see, so the player always knows where the
     // attack is coming from (the map is far larger than the viewport).
-    if (raidActive) _drawRaidDirectionArrows();
+    if (sim.raidActive) _drawRaidDirectionArrows();
 
     // Snow overlay — screen-space, always updated but only drawn in Winter
-    if (_snowParticles.length > 0) {
+    if (sim.snowParticles.length > 0) {
         const _drawSnow = SEASON_MODIFIERS[SEASONS.indexOf(gameState.season)].snowOverlay;
         ctx.setTransform(1, 0, 0, 1, 0, 0);
-        for (let i = 0; i < _snowParticles.length; i++) {
-            const p = _snowParticles[i];
+        for (let i = 0; i < sim.snowParticles.length; i++) {
+            const p = sim.snowParticles[i];
             if (_drawSnow) {
                 ctx.globalAlpha = p.opacity;
                 ctx.fillStyle = '#ffffff';
@@ -1792,16 +1796,16 @@ function render() {
 // view center) and draws one edge arrow + count per occupied direction.
 const _raidArrowBuckets = new Array(8);
 function _drawRaidDirectionArrows() {
-    const { zoom } = camera;
+    const { zoom } = sim.camera;
     const cw = canvas.width, ch = canvas.height;
-    const viewCX = camera.x + cw / (2 * zoom);
-    const viewCY = camera.y + ch / (2 * zoom);
+    const viewCX = sim.camera.x + cw / (2 * zoom);
+    const viewCY = sim.camera.y + ch / (2 * zoom);
     _raidArrowBuckets.fill(0);
     let anyOffscreen = false;
     for (const r of raiders) {
         if (r.state !== 'walking') continue;
-        const sx = (r.x - camera.x) * zoom;
-        const sy = (r.y - camera.y) * zoom;
+        const sx = (r.x - sim.camera.x) * zoom;
+        const sy = (r.y - sim.camera.y) * zoom;
         if (sx >= 0 && sx <= cw && sy >= 0 && sy <= ch) continue; // visible
         const ang = Math.atan2(r.y - viewCY, r.x - viewCX);
         const bucket = ((Math.round(ang / (Math.PI / 4)) % 8) + 8) % 8;
@@ -1855,8 +1859,8 @@ function _drawRaidDirectionArrows() {
 
 // ===================== MISSED CALCULATIONS & UI HELPERS =====================
 export function _buildStaticCache() {
-    const grid = window.grid;
-    const assets = window.assets;
+    const grid = sim.grid;
+    const assets = sim.assets;
     if (!grid || !assets) return;
     const W = grid.width, H = grid.height, T = TILE_SIZE;
     const oc = document.createElement('canvas');
@@ -1915,13 +1919,13 @@ export function _buildStaticCache() {
 // demolition, fire loss, and rubble decay). Pads by 1 tile so neighbours whose
 // sprites overlap the region repaint cleanly.
 export function patchStaticCache(tx, ty, w = 1, h = 1) {
-    const assets = window.assets;
-    if (!_staticCanvas || !grid || !assets) return; // full build happens at init/load
+    const assets = sim.assets;
+    if (!_staticCanvas || !sim.grid || !assets) return; // full build happens at init/load
     const T = TILE_SIZE;
     const octx = _staticCanvas.getContext('2d');
     octx.imageSmoothingEnabled = false;
     const x0 = Math.max(0, tx - 1), y0 = Math.max(0, ty - 1);
-    const x1 = Math.min(grid.width - 1, tx + w), y1 = Math.min(grid.height - 1, ty + h);
+    const x1 = Math.min(sim.grid.width - 1, tx + w), y1 = Math.min(sim.grid.height - 1, ty + h);
     octx.clearRect(x0 * T, y0 * T, (x1 - x0 + 1) * T, (y1 - y0 + 1) * T);
     if (_grassCanvas) {
         octx.drawImage(_grassCanvas,
@@ -1930,11 +1934,11 @@ export function patchStaticCache(tx, ty, w = 1, h = 1) {
     }
     for (let y = y0; y <= y1; y++) {
         for (let x = x0; x <= x1; x++) {
-            const tile = grid.tiles[y][x];
+            const tile = sim.grid.tiles[y][x];
             if (tile !== 'tile_grass' && assets[tile]) {
                 octx.drawImage(assets[tile], x * T, y * T, T, T);
             }
-            const s = grid.structures[y][x];
+            const s = sim.grid.structures[y][x];
             if (!s || s.isChild) continue;
             const key = s.def.key;
             // Dynamic buildings are drawn per-frame on top of the static layer
@@ -1970,9 +1974,9 @@ export function rebuildStructureLists() {
     const buildingCounts = {};
     const jobfulStructures = [];
     const underConstruction = [];
-    for (let ty = 0; ty < grid.height; ty++) {
-        for (let tx = 0; tx < grid.width; tx++) {
-            const s = grid.structures[ty][tx];
+    for (let ty = 0; ty < sim.grid.height; ty++) {
+        for (let tx = 0; tx < sim.grid.width; tx++) {
+            const s = sim.grid.structures[ty][tx];
             if (!s || s.isChild) continue;
             const key = s.def.key;
             if ((key === 'lumberyard' || key === 'quarry' || key === 'mine') && (s.progress ?? 1.0) < 1.0) {
@@ -2000,7 +2004,7 @@ export function rebuildStructureLists() {
             if ((s.progress ?? 1.0) < 1.0) underConstruction.push({ tx, ty });
         }
     }
-    window.setBuildingLists({
+    Object.assign(sim, {
         activeTowers, activeBallistaTowers, activeGates, activeFarms, activeMonuments,
         activeWalls, activePillageable, activeHouses, activeGranaries, activeTaverns,
         activeRubble, activeBarracks, activeArcheryRanges,
@@ -2021,13 +2025,13 @@ export function rebuildStructureLists() {
 export function showExpansionBanner() {
     const banner = document.getElementById('expansion-banner');
     if (!banner) return;
-    if (expansionBannerTimer) clearTimeout(expansionBannerTimer);
+    if (sim.expansionBannerTimer) clearTimeout(sim.expansionBannerTimer);
     
     banner.style.display = 'block';
     banner.offsetHeight; // force reflow
     banner.classList.add('active');
     
-    expansionBannerTimer = setTimeout(() => {
+    sim.expansionBannerTimer = setTimeout(() => {
         banner.classList.remove('active');
         setTimeout(() => {
             if (!banner.classList.contains('active')) {
@@ -2042,8 +2046,8 @@ export function getAdjacencyBonus(tx, ty, buildingType) {
     let count = 0;
     for (const {dx, dy} of dirs) {
         const nx = tx + dx, ny = ty + dy;
-        if (!grid.inBounds(nx, ny)) continue;
-        const s = grid.structures[ny][nx];
+        if (!sim.grid.inBounds(nx, ny)) continue;
+        const s = sim.grid.structures[ny][nx];
         if (!s) continue;
         const k = s.def.key;
         if (buildingType === 'farm'       && k === 'farm')                              count++;
@@ -2064,15 +2068,15 @@ export function getAdjacencyBonus(tx, ty, buildingType) {
 
 export function getFoodCap() {
     let cap = FOOD_CAP_BASE;
-    for (const g of window.activeGranaries) {
+    for (const g of sim.activeGranaries) {
         const key = `${g.tx},${g.ty}`;
-        cap += _tier2Upgrades[key] ? 350 : FOOD_CAP_PER_GRANARY;
+        cap += sim.tier2Upgrades[key] ? 350 : FOOD_CAP_PER_GRANARY;
     }
     return cap;
 }
 export function countBuildings(key) {
     // Reads the tally maintained by rebuildStructureLists — no grid scan.
-    return window.buildingCounts[key] || 0;
+    return sim.buildingCounts[key] || 0;
 }
 
 function getScaledCost(key) {
@@ -2086,13 +2090,13 @@ function getScaledCost(key) {
 
 function calcDefense() {
     // Derived from the maintained active-structure lists — no grid scan.
-    return window.activeWalls.length * 2 + window.activeTowers.length * 10 + window.activeGates.length * 3
-         + window.activeBallistaTowers.length * 15
+    return sim.activeWalls.length * 2 + sim.activeTowers.length * 10 + sim.activeGates.length * 3
+         + sim.activeBallistaTowers.length * 15
          + soldiers.length * 5 + archers.length * 8 + knights.length * 10;
 }
 
 function calcHappiness() {
-    _happinessFactors = [];
+    sim.happinessFactors = [];
     if (gameState.population === 0) return 100;
     let score = 45;
     const pop = gameState.population;
@@ -2100,60 +2104,60 @@ function calcHappiness() {
 
     // Food factor (mutually exclusive tiers)
     if (food === 0) {
-        score -= 25; _happinessFactors.push({ label: 'No Food', signs: '---', polarity: 'neg' });
+        score -= 25; sim.happinessFactors.push({ label: 'No Food', signs: '---', polarity: 'neg' });
     } else if (food < pop * 0.5) {
-        score -= 15; _happinessFactors.push({ label: 'Food Scarce', signs: '--', polarity: 'neg' });
+        score -= 15; sim.happinessFactors.push({ label: 'Food Scarce', signs: '--', polarity: 'neg' });
     } else if (food < pop) {
-        score -= 5;  _happinessFactors.push({ label: 'Food Low', signs: '-', polarity: 'neg' });
+        score -= 5;  sim.happinessFactors.push({ label: 'Food Low', signs: '-', polarity: 'neg' });
     } else if (food < pop * 2) {
-        score += 15; _happinessFactors.push({ label: 'Food Adequate', signs: '++', polarity: 'pos' });
+        score += 15; sim.happinessFactors.push({ label: 'Food Adequate', signs: '++', polarity: 'pos' });
     } else {
-        score += 25; _happinessFactors.push({ label: 'Food Surplus', signs: '+++', polarity: 'pos' });
+        score += 25; sim.happinessFactors.push({ label: 'Food Surplus', signs: '+++', polarity: 'pos' });
     }
 
     // Tavern factor (capped at +20)
-    const tavernCount = window.activeTaverns.length;
+    const tavernCount = sim.activeTaverns.length;
     if (tavernCount >= 2) {
-        score += 20; _happinessFactors.push({ label: 'Taverns (2+)', signs: '+++', polarity: 'pos' });
+        score += 20; sim.happinessFactors.push({ label: 'Taverns (2+)', signs: '+++', polarity: 'pos' });
     } else if (tavernCount === 1) {
-        score += 10; _happinessFactors.push({ label: 'Tavern', signs: '++', polarity: 'pos' });
+        score += 10; sim.happinessFactors.push({ label: 'Tavern', signs: '++', polarity: 'pos' });
     }
 
     // Tavern adjacency bonus (capped — house-ringed tavern farms were an exploit
     // that permanently locked in the fast spawn tier)
     let tavernAdjBonus = 0;
-    for (const t of window.activeTaverns) tavernAdjBonus += getAdjacencyBonus(t.tx, t.ty, 'tavern');
+    for (const t of sim.activeTaverns) tavernAdjBonus += getAdjacencyBonus(t.tx, t.ty, 'tavern');
     tavernAdjBonus = Math.min(9, tavernAdjBonus);
     if (tavernAdjBonus > 0) {
         score += tavernAdjBonus;
         const adjSigns = tavernAdjBonus >= 12 ? '+++' : tavernAdjBonus >= 6 ? '++' : '+';
-        _happinessFactors.push({ label: `Tavern Adj +${tavernAdjBonus}`, signs: adjSigns, polarity: 'pos' });
+        sim.happinessFactors.push({ label: `Tavern Adj +${tavernAdjBonus}`, signs: adjSigns, polarity: 'pos' });
     }
 
     // Winter penalty
     if (gameState.season === 'Winter') {
-        score -= 5; _happinessFactors.push({ label: 'Winter', signs: '-', polarity: 'neg' });
+        score -= 5; sim.happinessFactors.push({ label: 'Winter', signs: '-', polarity: 'neg' });
     }
 
     // Drought penalty
-    if (droughtActive) {
-        score -= 8; _happinessFactors.push({ label: 'Drought', signs: '-', polarity: 'neg' });
+    if (sim.droughtActive) {
+        score -= 8; sim.happinessFactors.push({ label: 'Drought', signs: '-', polarity: 'neg' });
     }
 
     // Grief penalty
-    if (_griefPenalty > 0) {
-        score -= _griefPenalty;
-        const griefSigns = _griefPenalty > 10 ? '---' : _griefPenalty > 5 ? '--' : '-';
-        _happinessFactors.push({ label: 'Grief', signs: griefSigns, polarity: 'neg' });
+    if (sim.griefPenalty > 0) {
+        score -= sim.griefPenalty;
+        const griefSigns = sim.griefPenalty > 10 ? '---' : sim.griefPenalty > 5 ? '--' : '-';
+        sim.happinessFactors.push({ label: 'Grief', signs: griefSigns, polarity: 'neg' });
     }
 
     // Fire penalty (count active fires from incidentManager)
-    const fireCount = (incidentManager?.active?.type === 'fire') ? (incidentManager.active.fires?.length ?? 0) : 0;
+    const fireCount = (sim.incidentManager?.active?.type === 'fire') ? (sim.incidentManager.active.fires?.length ?? 0) : 0;
     if (fireCount > 0) {
         const fireDmg = Math.min(18, fireCount * 6);
         score -= fireDmg;
         const fireSigns = fireCount >= 3 ? '---' : fireCount === 2 ? '--' : '-';
-        _happinessFactors.push({ label: 'Fire', signs: fireSigns, polarity: 'neg' });
+        sim.happinessFactors.push({ label: 'Fire', signs: fireSigns, polarity: 'neg' });
     }
 
     // Overcrowding penalty
@@ -2161,12 +2165,12 @@ function calcHappiness() {
         const excess = pop - gameState.housing;
         score -= Math.min(20, excess * 4);
         const crowdSigns = excess >= 5 ? '---' : excess >= 3 ? '--' : '-';
-        _happinessFactors.push({ label: 'Overcrowded', signs: crowdSigns, polarity: 'neg' });
+        sim.happinessFactors.push({ label: 'Overcrowded', signs: crowdSigns, polarity: 'neg' });
     }
 
     // Garrison pressure penalty
     if ((soldiers.length + archers.length + knights.length) > pop * 0.5) {
-        score -= 12; _happinessFactors.push({ label: 'Garrison Heavy', signs: '--', polarity: 'neg' });
+        score -= 12; sim.happinessFactors.push({ label: 'Garrison Heavy', signs: '--', polarity: 'neg' });
     }
 
     return Math.max(0, Math.min(100, Math.round(score)));

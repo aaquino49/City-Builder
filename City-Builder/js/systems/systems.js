@@ -1,3 +1,7 @@
+import {
+    sim,
+} from '../core/state.js';
+
 // Pixel Dominion — Systems Module (Incidents, Diplomacy, Audio, and Time Helpers)
 
 // ===================== INCIDENTS =====================
@@ -26,7 +30,7 @@ class IncidentManager {
     resetTimer() { this._nextTimer = 30 + Math.random() * 30; }
 
     update(dtSec) {
-        if (gameIsPaused) return;
+        if (sim.gameIsPaused) return;
         const hasWalkingRaiders = raiders.some(r => r.state === 'walking');
         if (this.active) {
             this._updateActive(dtSec);
@@ -69,14 +73,14 @@ class IncidentManager {
 
     _startFire() {
         const burnable = [];
-        for (let ty = 0; ty < grid.height; ty++)
-            for (let tx = 0; tx < grid.width; tx++) {
-                const s = grid.structures[ty][tx];
+        for (let ty = 0; ty < sim.grid.height; ty++)
+            for (let tx = 0; tx < sim.grid.width; tx++) {
+                const s = sim.grid.structures[ty][tx];
                 if (s && !_NON_BURNABLE.has(s.def.key) && (s.progress ?? 1.0) >= 1.0) burnable.push({ tx, ty });
             }
         if (!burnable.length) return;
         const pick = burnable[Math.floor(Math.random() * burnable.length)];
-        const s = grid.structures[pick.ty][pick.tx];
+        const s = sim.grid.structures[pick.ty][pick.tx];
         if (s.hp === undefined) s.hp = _BUILDING_HP[s.def.key] ?? 100;
         this.active = { type: 'fire', fires: [{ tx: pick.tx, ty: pick.ty, timer: 0 }], spreadTimer: 0, timer: 0, duration: 15 };
         showEventBanner('FIRE!', `A ${s.def.label ?? s.def.key} has caught fire!`);
@@ -85,21 +89,21 @@ class IncidentManager {
 
     _startDrought() {
         this.active = { type: 'drought', timer: 0, duration: 30 };
-        window.setDroughtActive(true);
+        sim.droughtActive = true;
         showEventBanner('DROUGHT!', 'Farms are barren!');
         playDroughtSFX();
     }
 
     _startMerchant() {
         this.active = { type: 'merchant', timer: 0, duration: 180 };
-        window.setMerchantNPC(new MerchantNPC());
+        sim.merchantNPC = new MerchantNPC();
         showEventBanner('MERCHANT ARRIVAL!', 'A trader approaches your town...');
         playMerchantSFX();
     }
 
     _startStrike() {
         this.active = { type: 'strike', timer: 0, duration: 20 };
-        window.setStrikeActive(true);
+        sim.strikeActive = true;
         showEventBanner('WORKERS ON STRIKE!', 'Workers demand better conditions!');
         playStrikeSFX();
     }
@@ -122,7 +126,7 @@ class IncidentManager {
         if (!available.length) return;
         const event = available[Math.floor(Math.random() * available.length)];
         this.active = { type: 'diplomacy', event, timer: 0 };
-        window.setGameIsPaused(true);
+        sim.gameIsPaused = true;
         showDiplomacyModal(event);
     }
 
@@ -133,11 +137,11 @@ class IncidentManager {
             const fire = a.fires[fi];
             fire.timer += dtSec;
             if (fire.timer >= 15) { a.fires.splice(fi, 1); continue; }
-            let s = grid.structures[fire.ty]?.[fire.tx];
+            let s = sim.grid.structures[fire.ty]?.[fire.tx];
             if (s && s.isChild) {
                 const parentX = s.parentX;
                 const parentY = s.parentY;
-                s = grid.structures[parentY]?.[parentX];
+                s = sim.grid.structures[parentY]?.[parentX];
             }
             if (!s || _NON_BURNABLE.has(s.def.key)) { a.fires.splice(fi, 1); continue; }
             const fx = fire.tx * TILE_SIZE + TILE_SIZE / 2;
@@ -163,7 +167,7 @@ class IncidentManager {
                         const destPY = Math.max(TILE_SIZE, Math.min((GRID_HEIGHT - 1) * TILE_SIZE, fy + Math.sin(angle) * r + (Math.random() - 0.5) * TILE_SIZE));
                         const dTX = Math.max(0, Math.min(GRID_WIDTH - 1, Math.floor(destPX / TILE_SIZE)));
                         const dTY = Math.max(0, Math.min(GRID_HEIGHT - 1, Math.floor(destPY / TILE_SIZE)));
-                        c._navigateTo(dTX, dTY, grid);
+                        c._navigateTo(dTX, dTY, sim.grid);
                     }
                 }
             } else {
@@ -172,7 +176,7 @@ class IncidentManager {
             if (s.hp <= 0) {
                 const parentTX = s.isChild ? s.parentX : fire.tx;
                 const parentTY = s.isChild ? s.parentY : fire.ty;
-                delete _tier2Upgrades[`${parentTX},${parentTY}`];
+                delete sim.tier2Upgrades[`${parentTX},${parentTY}`];
                 const w = s.def.width || 1;
                 const h = s.def.height || 1;
                 for (let dy = 0; dy < h; dy++) {
@@ -180,9 +184,9 @@ class IncidentManager {
                         const cy = parentTY + dy;
                         const cx = parentTX + dx;
                         if (dx === 0 && dy === 0) {
-                            grid.structures[cy][cx] = { def: RUBBLE_DEF, decayTimer: DAY_DURATION };
+                            sim.grid.structures[cy][cx] = { def: RUBBLE_DEF, decayTimer: DAY_DURATION };
                         } else {
-                            grid.structures[cy][cx] = null;
+                            sim.grid.structures[cy][cx] = null;
                         }
                     }
                 }
@@ -203,8 +207,8 @@ class IncidentManager {
                 for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
                     if (!dx && !dy) continue;
                     const nx = src.tx + dx, ny = src.ty + dy;
-                    if (!grid.inBounds(nx, ny)) continue;
-                    const s2 = grid.structures[ny][nx];
+                    if (!sim.grid.inBounds(nx, ny)) continue;
+                    const s2 = sim.grid.structures[ny][nx];
                     if (!s2 || _NON_BURNABLE.has(s2.def.key)) continue;
                     // Under-construction buildings can't be ignited directly — don't
                     // let spread reach them either (was an inconsistency).
@@ -227,23 +231,23 @@ class IncidentManager {
     }
 
     _updateMerchant(dtSec) {
-        if (!merchantNPC) { this._endIncident(); return; }
-        if (!gameIsPaused) merchantNPC.update(dtSec);
+        if (!sim.merchantNPC) { this._endIncident(); return; }
+        if (!sim.gameIsPaused) sim.merchantNPC.update(dtSec);
         // return after ending — _endIncident() nulls this.active, and reading
         // this.active.timer afterwards threw a TypeError every merchant departure
-        if (merchantNPC.state === 'done') { window.setMerchantNPC(null); this._endIncident(); return; }
-        if (this.active.timer >= this.active.duration) { window.setMerchantNPC(null); this._endIncident(); }
+        if (sim.merchantNPC.state === 'done') { sim.merchantNPC = null; this._endIncident(); return; }
+        if (this.active.timer >= this.active.duration) { sim.merchantNPC = null; this._endIncident(); }
     }
 
     _updateStrike(dtSec) {
-        if (gameState.happiness >= 60) { window.setStrikeActive(false); this._endIncident(); }
+        if (gameState.happiness >= 60) { sim.strikeActive = false; this._endIncident(); }
     }
 
     _endIncident() {
         const type = this.active?.type;
-        if (type === 'drought') window.setDroughtActive(false);
-        if (type === 'strike')  window.setStrikeActive(false);
-        if (type === 'merchant' && merchantNPC) { window.setMerchantNPC(null); }
+        if (type === 'drought') sim.droughtActive = false;
+        if (type === 'strike')  sim.strikeActive = false;
+        if (type === 'merchant' && sim.merchantNPC) { sim.merchantNPC = null; }
         this.active = null;
     }
 
@@ -258,18 +262,17 @@ class IncidentManager {
         this._nextTimer = data.nextTimer ?? 45;
         if (data.active) {
             this.active = data.active;
-            if (data.active.type === 'drought') window.setDroughtActive(true);
-            if (data.active.type === 'strike')  window.setStrikeActive(true);
+            if (data.active.type === 'drought') sim.droughtActive = true;
+            if (data.active.type === 'strike')  sim.strikeActive = true;
         }
     }
 }
 
 // ===================== DIPLOMACY =====================
 export const _DIPLOMACY_ACTION_MAP = {
-    // Use the state.js setters — bare assignment only updated the window copy,
-    // so an autosave taken afterwards persisted stale values.
-    'raid': () => { window.setRaidTimer(0); },
-    'raid_strong': () => { window.setRaidTimer(0); window.setRaidStrength(Math.ceil(raidStrength * 1.5)); },
+    // Delayed diplomacy consequences mutate the shared simulation state.
+    'raid': () => { sim.raidTimer = 0; },
+    'raid_strong': () => { sim.raidTimer = 0; sim.raidStrength = Math.ceil(sim.raidStrength * 1.5); },
     'return_soldiers_10': () => {
         const cx = 32.5 * TILE_SIZE, cy = 32.5 * TILE_SIZE;
         for (let i = 0; i < 10; i++) soldiers.push(new Soldier(cx + (Math.random() - 0.5) * TILE_SIZE, cy + (Math.random() - 0.5) * TILE_SIZE));
@@ -294,7 +297,7 @@ function scheduleDiplomacyAction(actionKey, delayDays) {
         console.warn(`[Pixel Dominion] Unknown diplomacy action: ${actionKey}`);
         return;
     }
-    _diplomacyTimers.push({ remainingSec: delayDays * DAY_DURATION, actionKey, action });
+    sim.diplomacyTimers.push({ remainingSec: delayDays * DAY_DURATION, actionKey, action });
 }
 
 const _DIPLOMACY_POOL = [
@@ -357,7 +360,7 @@ const _DIPLOMACY_POOL = [
         description: 'A rival city proposes a mutual non-aggression alliance.',
         guard: () => true,
         optionA: { label: 'Accept Alliance',  cost: 'Raids suppressed 1 season',
-            apply: () => { window.setAllianceTimer(SEASON_DURATION); } },
+            apply: () => { sim.allianceTimer = SEASON_DURATION; } },
         optionB: { label: 'Reject',           cost: 'Raid in 2 days',
             apply: () => scheduleDiplomacyAction('raid', 2) },
     },
@@ -427,7 +430,7 @@ const _DIPLOMACY_POOL = [
         optionA: { label: 'Send Iron',        cost: '−20 Iron  +120 Gold',
             apply: () => { gameState.iron = Math.max(0, gameState.iron - 20); gameState.gold += 120; } },
         optionB: { label: 'Decline',          cost: 'Soldier cost +50% for 3 days',
-            apply: () => { window.setSoldierCostMult(1.5); window.setSoldierCostTimer(3 * DAY_DURATION); } },
+            apply: () => { sim.soldierCostMult = 1.5; sim.soldierCostTimer = 3 * DAY_DURATION; } },
     },
     {
         id: 'wandering_bard',
@@ -725,9 +728,9 @@ function stopMusic() {
 
 function updateMusicTheme() {
     if (!gameState.started) return;
-    const hasActiveRaiders = raidActive || raiders.some(r => r.state === 'walking');
+    const hasActiveRaiders = sim.raidActive || raiders.some(r => r.state === 'walking');
     if (hasActiveRaiders) { setMusicTheme('battle'); return; }
-    if (_scoutPhase || (raidTimer <= 30 && raidTimer > 0)) { setMusicTheme('alert'); return; }
+    if (sim.scoutPhase || (sim.raidTimer <= 30 && sim.raidTimer > 0)) { setMusicTheme('alert'); return; }
     setMusicTheme('peace');
 }
 
@@ -1033,14 +1036,14 @@ function playStrikeSFX() {
 
 // Camera Shake
 function triggerShake(intensity) {
-    _shakeIntensity = Math.max(_shakeIntensity, intensity);
+    sim.shakeIntensity = Math.max(sim.shakeIntensity, intensity);
 }
 
 function updateCameraShake() {
-    if (_shakeIntensity < 0.1) { _shakeIntensity = 0; _shakeX = 0; _shakeY = 0; return; }
-    _shakeX = (Math.random() * 2 - 1) * _shakeIntensity;
-    _shakeY = (Math.random() * 2 - 1) * _shakeIntensity;
-    _shakeIntensity *= 0.9;
+    if (sim.shakeIntensity < 0.1) { sim.shakeIntensity = 0; sim.shakeX = 0; sim.shakeY = 0; return; }
+    sim.shakeX = (Math.random() * 2 - 1) * sim.shakeIntensity;
+    sim.shakeY = (Math.random() * 2 - 1) * sim.shakeIntensity;
+    sim.shakeIntensity *= 0.9;
 }
 
 // Floating text helper
@@ -1057,7 +1060,7 @@ export function showEventBanner(title, desc) {
     const titleEl = document.getElementById('event-banner-title');
     const descEl  = document.getElementById('event-banner-desc');
     if (!banner) return;
-    if (_bannerTimeout) { clearTimeout(_bannerTimeout); _bannerTimeout = null; }
+    if (sim.bannerTimeout) { clearTimeout(sim.bannerTimeout); sim.bannerTimeout = null; }
     if (titleEl) titleEl.textContent = title;
     if (descEl)  descEl.textContent  = desc;
     banner.style.transition = 'none';
@@ -1066,24 +1069,24 @@ export function showEventBanner(title, desc) {
     banner.offsetHeight;
     banner.style.transition = 'opacity 0.5s ease';
     banner.style.opacity = '1';
-    _bannerTimeout = setTimeout(() => {
+    sim.bannerTimeout = setTimeout(() => {
         banner.style.opacity = '0';
         setTimeout(() => { if (banner.style.opacity === '0') banner.style.display = 'none'; }, 500);
-        _bannerTimeout = null;
+        sim.bannerTimeout = null;
     }, 4000);
 }
 
 // Stats overlay
 function toggleStatsOverlay() {
-    statsOverlayVisible = !statsOverlayVisible;
+    sim.statsOverlayVisible = !sim.statsOverlayVisible;
     const overlay = document.getElementById('stats-overlay');
-    if (overlay) overlay.classList.toggle('visible', statsOverlayVisible);
-    if (statsOverlayVisible) updateStatsOverlay();
+    if (overlay) overlay.classList.toggle('visible', sim.statsOverlayVisible);
+    if (sim.statsOverlayVisible) updateStatsOverlay();
 }
 
 function updateStatsOverlay() {
     const overlay = document.getElementById('stats-overlay');
-    if (!overlay || !statsOverlayVisible) return;
+    if (!overlay || !sim.statsOverlayVisible) return;
     const farmers   = citizens.filter(c => c.job === 'farmer').length;
     const cutters   = citizens.filter(c => c.job === 'woodcutter').length;
     const stoneMins = citizens.filter(c => c.job === 'stone_miner').length;
@@ -1103,8 +1106,8 @@ function updateStatsOverlay() {
     const cropRotation = !!gameState.upgrades?.crop_rotation;
     const workerFoodPerCycle = (PB.farmBaseFoodPerCycle ?? 13.5) * seasonMod.foodYieldMult + (cropRotation ? 2 : 0);
     const passivePerFarmCycle = (PB.farmPassiveFoodPerCycle ?? 2.25) + (cropRotation ? 0.5 : 0);
-    const farmCount = window.activeFarms?.length ?? 0;
-    const foodProdPerMin = droughtActive ? 0 : Math.round(
+    const farmCount = sim.activeFarms?.length ?? 0;
+    const foodProdPerMin = sim.droughtActive ? 0 : Math.round(
         farmers * workerFoodPerCycle * (60 / cycleSec) +
         farmCount * passivePerFarmCycle * (60 / cycleSec));
     const militaryCount = soldiers.length + archers.length + knights.length;
@@ -1126,12 +1129,12 @@ function updateStatsOverlay() {
                 <div class="ledger-row"><span class="ledger-label">Knights</span><span class="ledger-value">${knights.length}</span></div>
                 <div class="ledger-row"><span class="ledger-label">Happiness</span><span class="ledger-value positive">${gameState.happiness.toFixed(0)}%</span></div>
                 <div class="ledger-row"><span class="ledger-label">Defense</span><span class="ledger-value">${gameState.defense}</span></div>
-                <div class="ledger-row"><span class="ledger-label">Next Raid</span><span class="ledger-value">${formatTime(raidTimer)}</span></div>
+                <div class="ledger-row"><span class="ledger-label">Next Raid</span><span class="ledger-value">${formatTime(sim.raidTimer)}</span></div>
             </div>
             <div class="stats-income-title">PRODUCTION · PER MINUTE</div>
             <div class="stats-income-grid">
                 <div class="ledger-row"><span class="ledger-label">Gold</span><span class="ledger-value positive">${taxPerMin >= 0 ? '+' : ''}${taxPerMin}</span></div>
-                <div class="ledger-row"><span class="ledger-label">Food</span><span class="ledger-value positive">${foodPerMin}${droughtActive ? ' (drought)' : ''}</span></div>
+                <div class="ledger-row"><span class="ledger-label">Food</span><span class="ledger-value positive">${foodPerMin}${sim.droughtActive ? ' (drought)' : ''}</span></div>
                 <div class="ledger-row"><span class="ledger-label">Wood</span><span class="ledger-value positive">${cutters > 0 ? '≈+' + woodPerMin : '0'}</span></div>
                 <div class="ledger-row"><span class="ledger-label">Stone</span><span class="ledger-value positive">${stoneMins > 0 ? '≈+' + stonePerMin : '0'}</span></div>
                 <div class="ledger-row"><span class="ledger-label">Iron</span><span class="ledger-value positive">${ironMins > 0 ? '≈+' + ironPerMin : '0'}</span></div>
@@ -1180,7 +1183,7 @@ function openTradeModal() {
             }
         });
     });
-    window.setGameIsPaused(true);
+    sim.gameIsPaused = true;
     document.getElementById('trade-modal').classList.add('open');
 }
 

@@ -1,17 +1,21 @@
+import {
+    sim,
+} from '../core/state.js';
+
 // Pixel Dominion — Entity Classes Module
 
 // Helper for units clamping
 function _clampToTerritory(u) {
     if (u._assaulting) return; // camp assaults range beyond the border
     const cx = 32.5 * TILE_SIZE, cy = 32.5 * TILE_SIZE;
-    const maxR = (currentTerritoryRadius + 1) * TILE_SIZE;
+    const maxR = (sim.currentTerritoryRadius + 1) * TILE_SIZE;
     const dx = u.x - cx, dy = u.y - cy;
     const dist = Math.hypot(dx, dy);
     if (dist > maxR) { u.x = cx + dx / dist * maxR; u.y = cy + dy / dist * maxR; }
 }
 
 function _isInTerritory(tx, ty, pad = 1) {
-    return Math.hypot(tx - 32, ty - 32) <= currentTerritoryRadius + pad;
+    return Math.hypot(tx - 32, ty - 32) <= sim.currentTerritoryRadius + pad;
 }
 
 function _getNearestOpenNeighbor(tx, ty, walkableFn = isFriendlyWalkable) {
@@ -33,9 +37,9 @@ function _getNearestOpenNeighbor(tx, ty, walkableFn = isFriendlyWalkable) {
 function _getDefendRallyTile() {
     const centerTX = 32;
     const centerTY = 32;
-    if ((activeWalls.length + activeGates.length) > 0) {
+    if ((sim.activeWalls.length + sim.activeGates.length) > 0) {
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const { tx, ty } of [...activeWalls, ...activeGates]) {
+        for (const { tx, ty } of [...sim.activeWalls, ...sim.activeGates]) {
             minX = Math.min(minX, tx); minY = Math.min(minY, ty);
             maxX = Math.max(maxX, tx); maxY = Math.max(maxY, ty);
         }
@@ -54,7 +58,7 @@ function _getDefendRallyTile() {
         }
     }
     if (isFriendlyWalkable(centerTX, centerTY)) return { tx: centerTX, ty: centerTY };
-    for (let radius = 1; radius <= Math.max(2, currentTerritoryRadius + 1); radius++) {
+    for (let radius = 1; radius <= Math.max(2, sim.currentTerritoryRadius + 1); radius++) {
         for (let dy = -radius; dy <= radius; dy++) {
             for (let dx = -radius; dx <= radius; dx++) {
                 const tx = centerTX + dx;
@@ -68,7 +72,7 @@ function _getDefendRallyTile() {
 }
 
 function _findProtectedWallPost(unit, activeRaiders) {
-    const walls = [...activeWalls, ...activeGates];
+    const walls = [...sim.activeWalls, ...sim.activeGates];
     if (walls.length === 0) return null;
     const ux = Math.floor(unit.x / TILE_SIZE);
     const uy = Math.floor(unit.y / TILE_SIZE);
@@ -185,7 +189,7 @@ const _leashScratch = [];
 // point are engaged, so the army holds the walls instead of scattering across
 // the map after every raider. Attack mode (and no-rally towns) engage anything.
 function _selectEngageableRaiders(activeRaiders) {
-    if (_combatMode !== 'defend' || activeRaiders.length === 0) return activeRaiders;
+    if (sim.combatMode !== 'defend' || activeRaiders.length === 0) return activeRaiders;
     const rally = window._defendRally;
     if (!rally) return activeRaiders;
     const CB = window.COMBAT_BALANCE;
@@ -205,7 +209,7 @@ function _selectEngageableRaiders(activeRaiders) {
 // Reuses the unit's chase-path fields; damage exchange happens in main.js's
 // updateCampAssault once the unit is in range.
 function _marchOnCamp(unit, dtSec, grid, speedTiles) {
-    const camps = window.raiderCamps;
+    const camps = sim.raiderCamps;
     let camp = null, bestSq = Infinity;
     for (const c of camps) {
         const dx = c.x - unit.x, dy = c.y - unit.y;
@@ -594,7 +598,7 @@ export class Citizen {
             return;
         }
         // Strike: resource workers stand idle
-        if (strikeActive && (this.job === 'farmer' || this.job === 'woodcutter' || this.job === 'stone_miner' || this.job === 'iron_miner')) return;
+        if (sim.strikeActive && (this.job === 'farmer' || this.job === 'woodcutter' || this.job === 'stone_miner' || this.job === 'iron_miner')) return;
         if (this.job !== 'builder' && this.job !== 'rebel') {
             const ws = grid.structures[this._workTY]?.[this._workTX];
             const expectedJob = ws ? {
@@ -634,13 +638,13 @@ export class Citizen {
             this._phaseTimer += dtSec;
             this._tickAmbientWalk(dtSec, grid, this._workTX, this._workTY, 2);
             if (this._phaseTimer >= 2.0) {
-                if (!droughtActive) {
+                if (!sim.droughtActive) {
                     const farmKey = `${this._workTX},${this._workTY}`;
                     const farmBaseFood = window.PRODUCTION_BALANCE?.farmBaseFoodPerCycle ?? 6;
                     let foodBonus = farmBaseFood * SEASON_MODIFIERS[SEASONS.indexOf(gameState.season)].foodYieldMult;
                     if (gameState.upgrades?.crop_rotation) foodBonus += 2;
                     foodBonus += getAdjacencyBonus(this._workTX, this._workTY, 'farm');
-                    if (_tier2Upgrades[farmKey]) foodBonus += 2;
+                    if (sim.tier2Upgrades[farmKey]) foodBonus += 2;
                     gameState.food += foodBonus;
                     gameState.food = Math.min(gameState.food, getFoodCap());
                     spawnFloat(this.x, this.y - 10, `+${Math.round(foodBonus)} Food`, '#88cc44', 1.0);
@@ -714,7 +718,7 @@ export class Citizen {
                 const lumberKey = `${this._workTX},${this._workTY}`;
                 let woodBonus = 10 * SEASON_MODIFIERS[SEASONS.indexOf(gameState.season)].woodYieldMult;
                 woodBonus += getAdjacencyBonus(this._workTX, this._workTY, 'lumberyard');
-                if (_tier2Upgrades[lumberKey]) woodBonus += 2;
+                if (sim.tier2Upgrades[lumberKey]) woodBonus += 2;
                 // No tree actually harvested → reduced "gleaning" yield, so
                 // real nodes matter but a deforested map doesn't zero the economy.
                 if (!this._carrying) woodBonus *= window.PRODUCTION_BALANCE?.gleanYieldMult ?? 0.4;
@@ -790,7 +794,7 @@ export class Citizen {
             if (this._isAtTile(this._workTX, this._workTY)) {
                 const mineKey = `${this._workTX},${this._workTY}`;
                 const adjBonus = getAdjacencyBonus(this._workTX, this._workTY, adjacencyType);
-                const t2Bonus = (resourceKey === 'iron' && _tier2Upgrades[mineKey]) ? 2 : 0;
+                const t2Bonus = (resourceKey === 'iron' && sim.tier2Upgrades[mineKey]) ? 2 : 0;
                 // Reduced "gleaning" yield when no deposit was actually worked.
                 const gleanMult = this._carrying ? 1 : (window.PRODUCTION_BALANCE?.gleanYieldMult ?? 0.4);
                 this._carrying = false;
@@ -810,7 +814,7 @@ export class Citizen {
 
     _updateRebel(dtSec, grid) {
         // Calm down when happiness recovers, during raids, or no soldiers left
-        if (gameState.happiness >= 50 || raidActive || soldiers.length === 0) {
+        if (gameState.happiness >= 50 || sim.raidActive || soldiers.length === 0) {
             this.job = 'idle'; this._phase = 'idle'; this._rebelTarget = null; return;
         }
         // Find nearest soldier if needed
@@ -927,7 +931,7 @@ export class Soldier {
     }
 
     _pickPatrolTarget(grid) {
-        if (_combatMode === 'defend') {
+        if (sim.combatMode === 'defend') {
             const rally = _getDefendRallyTile();
             if (rally) {
                 const sx = Math.floor(this.x / TILE_SIZE);
@@ -954,7 +958,7 @@ export class Soldier {
         for (const { dx, dy } of dirs) {
             const nx = curTX + dx, ny = curTY + dy;
             if (!grid.inBounds(nx, ny)) continue;
-            if (Math.hypot(nx - 32, ny - 32) > currentTerritoryRadius + 1) continue;
+            if (Math.hypot(nx - 32, ny - 32) > sim.currentTerritoryRadius + 1) continue;
             const s = grid.structures[ny][nx];
             if (s && military.has(s.def.key)) {
                 const post = _getNearestOpenNeighbor(nx, ny, isFriendlyWalkable);
@@ -964,7 +968,7 @@ export class Soldier {
         for (const { dx, dy } of dirs) {
             const nx = curTX + dx, ny = curTY + dy;
             if (!grid.inBounds(nx, ny)) continue;
-            if (Math.hypot(nx - 32, ny - 32) > currentTerritoryRadius + 1) continue;
+            if (Math.hypot(nx - 32, ny - 32) > sim.currentTerritoryRadius + 1) continue;
             const tile = grid.tiles[ny][nx];
             if ((tile === 'tile_grass' || tile === 'tile_dirt' || tile === 'tile_road') && !grid.structures[ny][nx]) {
                 this._setTarget(nx, ny, grid); return;
@@ -1009,7 +1013,7 @@ export class Soldier {
         }
         // ATTACK mode with standing raider camps and nothing else to fight:
         // march out and raze them (the whole point of attack mode).
-        if (_combatMode === 'attack' && (window.raiderCamps?.length ?? 0) > 0) {
+        if (sim.combatMode === 'attack' && (sim.raiderCamps?.length ?? 0) > 0) {
             this._assaulting = true;
             _marchOnCamp(this, dtSec, grid, 1.5);
             return;
@@ -1053,13 +1057,13 @@ export class Archer {
     update(dtSec, grid, activeRaiders) {
         _clampToTerritory(this);
         // Mode-sync: switch state when _combatMode changes
-        if (_combatMode === 'attack' && (this._postTX !== -1 || this.state === 'seeking_post' || this.state === 'at_post')) {
+        if (sim.combatMode === 'attack' && (this._postTX !== -1 || this.state === 'seeking_post' || this.state === 'at_post')) {
             this._postTX = -1; this._postTY = -1;
             this._postStandTX = -1; this._postStandTY = -1;
             this.state = 'following';
             this._path = [];
             this._pathIndex = 0;
-        } else if (_combatMode === 'defend' && this.state === 'following') {
+        } else if (sim.combatMode === 'defend' && this.state === 'following') {
             this.state = 'seeking_post';
             this._path = [];
             this._pathIndex = 0;
@@ -1156,7 +1160,7 @@ export class Archer {
                     nearestRaiderTY = Math.floor(r.y / TILE_SIZE);
                 }
             }
-            for (const list of [activeWalls, activeTowers]) {
+            for (const list of [sim.activeWalls, sim.activeTowers]) {
                 for (const { tx: nx, ty: ny } of list) {
                     const dx = nx - mTX, dy = ny - mTY;
                     if (dx < -25 || dx > 25 || dy < -25 || dy > 25) continue;
@@ -1288,7 +1292,7 @@ export class Knight {
             return;
         }
         // ATTACK mode: knights join camp assaults alongside soldiers
-        if (_combatMode === 'attack' && (window.raiderCamps?.length ?? 0) > 0) {
+        if (sim.combatMode === 'attack' && (sim.raiderCamps?.length ?? 0) > 0) {
             this._assaulting = true;
             _marchOnCamp(this, dtSec, grid, 1.2);
             return;
@@ -1300,7 +1304,7 @@ export class Knight {
             this._idleTimer += dtSec;
             if (this._idleTimer >= this._idleWait) {
                 this._idleTimer = 0; this._idleWait = 0.5 + Math.random() * 2;
-                if (_combatMode === 'defend') {
+                if (sim.combatMode === 'defend') {
                     const rally = _getDefendRallyTile();
                     if (rally) {
                         const sx = Math.floor(this.x / TILE_SIZE);
@@ -1322,7 +1326,7 @@ export class Knight {
                 for (const {dx,dy} of dirs) {
                     const nx = cx+dx, ny = cy+dy;
                     if (!grid.inBounds(nx,ny)) continue;
-                    if (Math.hypot(nx - 32, ny - 32) > currentTerritoryRadius + 1) continue;
+                    if (Math.hypot(nx - 32, ny - 32) > sim.currentTerritoryRadius + 1) continue;
                     const tile = grid.tiles[ny][nx];
                     if ((tile==='tile_grass'||tile==='tile_dirt'||tile==='tile_road') && !grid.structures[ny][nx]) {
                         this.targetX = nx*TILE_SIZE+TILE_SIZE/2; this.targetY = ny*TILE_SIZE+TILE_SIZE/2;
@@ -1369,8 +1373,8 @@ export class MerchantNPC {
                 for (let dy = -5; dy <= 5 && !this._tradeOpened; dy++) {
                     for (let dx = -5; dx <= 5 && !this._tradeOpened; dx++) {
                         const nx = tx + dx, ny = ty + dy;
-                        if (!grid.inBounds(nx, ny)) continue;
-                        const s = grid.structures[ny][nx];
+                        if (!sim.grid.inBounds(nx, ny)) continue;
+                        const s = sim.grid.structures[ny][nx];
                         if (s && BUILDINGS[s.def.key] && Math.hypot(dx, dy) <= 5) {
                             this._tradeOpened = true;
                             this.state = 'trading';
@@ -1432,7 +1436,7 @@ export class Raider {
         }
         // Siege raiders always prefer walls/gates first
         if (this.type === 'siege') {
-            const sg = activeGates.length > 0 ? activeGates : activeWalls.length > 0 ? activeWalls : null;
+            const sg = sim.activeGates.length > 0 ? sim.activeGates : sim.activeWalls.length > 0 ? sim.activeWalls : null;
             if (sg && sg.length > 0) {
                 const sx = Math.floor(this.x / TILE_SIZE), sy = Math.floor(this.y / TILE_SIZE);
                 let best = null, bestD = Infinity;
@@ -1447,14 +1451,14 @@ export class Raider {
             if (citizens.length === 0) { this.objective = 'pillage'; return this._pickObjectiveTarget(depth + 1); }
             this._target = { type: 'citizen', citizen: citizens[Math.floor(Math.random() * citizens.length)] };
         } else if (this.objective === 'pillage') {
-            if (activePillageable.length === 0) { this.objective = 'breach'; return this._pickObjectiveTarget(depth + 1); }
-            const t = activePillageable[Math.floor(Math.random() * activePillageable.length)];
+            if (sim.activePillageable.length === 0) { this.objective = 'breach'; return this._pickObjectiveTarget(depth + 1); }
+            const t = sim.activePillageable[Math.floor(Math.random() * sim.activePillageable.length)];
             this._target = { type: 'building', tx: t.tx, ty: t.ty };
         } else {
             // breach: prefer gates, then walls, then towers
-            const breachable = activeGates.length > 0 ? activeGates
-                             : activeWalls.length > 0  ? activeWalls
-                             : activeTowers;
+            const breachable = sim.activeGates.length > 0 ? sim.activeGates
+                             : sim.activeWalls.length > 0  ? sim.activeWalls
+                             : sim.activeTowers;
             if (breachable.length === 0) { this.objective = 'pillage'; return this._pickObjectiveTarget(depth + 1); }
             const t = breachable[Math.floor(Math.random() * breachable.length)];
             this._target = { type: 'building', tx: t.tx, ty: t.ty };
@@ -1478,8 +1482,8 @@ export class Raider {
         if (this._target.type === 'retreat') {
             const cx = Math.floor(this.x / TILE_SIZE);
             const cy = Math.floor(this.y / TILE_SIZE);
-            const ex = this.x < grid.width * TILE_SIZE / 2 ? 0 : grid.width - 1;
-            const ey = this.y < grid.height * TILE_SIZE / 2 ? 0 : grid.height - 1;
+            const ex = this.x < sim.grid.width * TILE_SIZE / 2 ? 0 : sim.grid.width - 1;
+            const ey = this.y < sim.grid.height * TILE_SIZE / 2 ? 0 : sim.grid.height - 1;
             const path = aStarPath(cx, cy, ex, ey);
             if (path && path.length > 0) { this._path = path; this._pathIndex = 0; this._startNextWaypoint(); }
             return;
@@ -1496,7 +1500,7 @@ export class Raider {
             dx = Math.floor(this._target.citizen.x / TILE_SIZE);
             dy = Math.floor(this._target.citizen.y / TILE_SIZE);
         } else {
-            const s = grid.structures[this._target.ty]?.[this._target.tx];
+            const s = sim.grid.structures[this._target.ty]?.[this._target.tx];
             if (!s || s.def.key === 'rubble') {
                 this._retryObjective(_depth); return;
             }
@@ -1528,8 +1532,8 @@ export class Raider {
                 this._switchToGateBreaching();
             } else {
                 // Already targeting a structure but fully blocked — wander toward center
-                const wx = Math.floor(grid.width / 2) + Math.floor((Math.random() - 0.5) * 10);
-                const wy = Math.floor(grid.height / 2) + Math.floor((Math.random() - 0.5) * 10);
+                const wx = Math.floor(sim.grid.width / 2) + Math.floor((Math.random() - 0.5) * 10);
+                const wy = Math.floor(sim.grid.height / 2) + Math.floor((Math.random() - 0.5) * 10);
                 const wp = aStarPath(sx, sy, wx, wy);
                 if (wp && wp.length > 0) { this._path = wp; this._pathIndex = 0; this._startNextWaypoint(); }
             }
@@ -1547,12 +1551,12 @@ export class Raider {
         const sy = Math.floor(this.y / TILE_SIZE);
         let best = null, bestD = Infinity;
         // Prefer gates, fall back to walls — use cached lists instead of full grid scan
-        for (const { tx, ty } of activeGates) {
+        for (const { tx, ty } of sim.activeGates) {
             const d = Math.hypot(tx - sx, ty - sy);
             if (d < bestD) { bestD = d; best = { tx, ty }; }
         }
         if (!best) {
-            for (const { tx, ty } of activeWalls) {
+            for (const { tx, ty } of sim.activeWalls) {
                 const d = Math.hypot(tx - sx, ty - sy);
                 if (d < bestD) { bestD = d; best = { tx, ty }; }
             }
@@ -1584,7 +1588,7 @@ export class Raider {
                 this._attacking = true; this._attackTimer = 0; this._attackDuration = 1.5;
             } else { this._target = null; }
         } else {
-            const s = grid.structures[this._target.ty]?.[this._target.tx];
+            const s = sim.grid.structures[this._target.ty]?.[this._target.tx];
             if (!s || s.def.key === 'rubble') { this._target = null; return; }
             const bx = this._target.tx * TILE_SIZE + TILE_SIZE / 2;
             const by = this._target.ty * TILE_SIZE + TILE_SIZE / 2;
@@ -1605,10 +1609,9 @@ export class Raider {
                 c._alive = false;
                 citizens.splice(idx, 1);
                 gameState.population = Math.max(0, gameState.population - 1);
-                // Setters keep the module-scoped copies in state.js in sync
-                // (bare assignment only updated window.*, letting saves go stale)
-                window.setRaidCitizensKilled(raidCitizensKilled + 1);
-                window.setGriefPenalty(Math.min(15, _griefPenalty + 5));
+                // Record the raid and grief tallies in shared simulation state.
+                sim.raidCitizensKilled = sim.raidCitizensKilled + 1;
+                sim.griefPenalty = Math.min(15, sim.griefPenalty + 5);
                 const p = getPooledParticle();
                 p.x = c.x; p.y = c.y; p.type = 'puff'; p.timer = 0; p.duration = 0.4; p.alpha = 1.0;
                 particles.push(p);
@@ -1617,14 +1620,14 @@ export class Raider {
             }
         } else if (this._target?.type === 'building') {
             const { tx, ty } = this._target;
-            let s = grid.structures[ty]?.[tx];
+            let s = sim.grid.structures[ty]?.[tx];
             if (s && s.def.key !== 'rubble') {
                 let parentTX = tx;
                 let parentTY = ty;
                 if (s.isChild) {
                     parentTX = s.parentX;
                     parentTY = s.parentY;
-                    s = grid.structures[parentTY]?.[parentTX];
+                    s = sim.grid.structures[parentTY]?.[parentTX];
                 }
                 if (s && s.def.key !== 'rubble') {
                     // Torch raider: attempt to start fire; if successful retreat immediately
@@ -1651,16 +1654,16 @@ export class Raider {
                     triggerShake(3);
                     if (s.hp <= 0) {
                         gameState.housing = Math.max(0, gameState.housing - (s.def.housing || 0));
-                        delete _tier2Upgrades[`${parentTX},${parentTY}`];
+                        delete sim.tier2Upgrades[`${parentTX},${parentTY}`];
                         const w = s.def.width || 1;
                         const h = s.def.height || 1;
                         for (let dy = 0; dy < h; dy++) {
                             for (let dx = 0; dx < w; dx++) {
                                 const cy = parentTY + dy, cx = parentTX + dx;
-                                grid.structures[cy][cx] = (dx === 0 && dy === 0) ? { def: RUBBLE_DEF, decayTimer: DAY_DURATION } : null;
+                                sim.grid.structures[cy][cx] = (dx === 0 && dy === 0) ? { def: RUBBLE_DEF, decayTimer: DAY_DURATION } : null;
                             }
                         }
-                        window.setRaidBuildingsDestroyed(raidBuildingsDestroyed + 1);
+                        sim.raidBuildingsDestroyed = sim.raidBuildingsDestroyed + 1;
                         window.patchStaticCache?.(parentTX, parentTY, w, h);
                         rebuildStructureLists();
                         if (window.markUIDirty) window.markUIDirty();
@@ -1691,13 +1694,13 @@ export class Raider {
 
         // Retreat: velocity-based move toward map edge, no A*
         if (this._target?.type === 'retreat') {
-            const cx = grid.width * TILE_SIZE / 2, cy = grid.height * TILE_SIZE / 2;
+            const cx = sim.grid.width * TILE_SIZE / 2, cy = sim.grid.height * TILE_SIZE / 2;
             const ddx = this.x - cx, ddy = this.y - cy;
             const dist = Math.hypot(ddx, ddy) || 1;
             const spd = TILE_SIZE / this._moveDuration;
             this.x += (ddx / dist) * spd * dtSec;
             this.y += (ddy / dist) * spd * dtSec;
-            const W = grid.width * TILE_SIZE, H = grid.height * TILE_SIZE;
+            const W = sim.grid.width * TILE_SIZE, H = sim.grid.height * TILE_SIZE;
             if (this.x < -TILE_SIZE * 2 || this.x > W + TILE_SIZE * 2 ||
                 this.y < -TILE_SIZE * 2 || this.y > H + TILE_SIZE * 2) {
                 this.state = 'dead';

@@ -3,7 +3,6 @@
 import {
     applyDifficultyConfig,
     calcTerritoryRadius,
-    currentTerritoryRadius,
     DEFAULT_DIFFICULTY_KEY,
     FINAL_RAID_WAVE,
     flushUI,
@@ -14,38 +13,10 @@ import {
     getRootStructureAt,
     getStructureAt,
     JOB_SCAN_INTERVAL,
-    setAllianceTimer,
-    setCombatMode,
-    setAutoSaveTimer,
-    setDayPhase,
-    setDayTimer,
-    setEmigrationTimer,
-    setGameIsPaused,
-    setGriefPenalty,
-    setJobScanTimer,
-    setLastSeason,
-    setOverlayAlpha,
-    setRaidActive,
-    setRaidActiveTimer,
-    setRaidBuildingsDestroyed,
-    setRaidCitizensKilled,
-    setRaidCount,
-    setRaidQueued,
-    setRaidWarningPlayed,
-    setRaidWarningSpawnCount,
-    setRaidStrength,
-    setRaidTimer,
-    setScoutPhase,
-    setScoutTimer,
-    setSpawnTimer,
-    setSoldierCostMult,
-    setSoldierCostTimer,
-    setTaxTimer,
-    setTimeScale,
-    setUserPaused,
+    sim,
 } from './core/state.js';
 import './core/utils.js';
-import { setRaidPathBudget } from './core/pathfinding.js';
+import './core/pathfinding.js';
 import './entities/entities.js';
 import { _NON_BURNABLE } from './systems/systems.js';
 import { patchStaticCache, showModal, triggerVictory, updateCombatModeUI, updateRaidHUD, _buildStaticCache } from './ui/ui.js';
@@ -91,17 +62,17 @@ function assignCitizenToHide(c) {
     c._path = [];
     c._pathIndex = 0;
     c.state = 'idle';
-    if (activeHouses.length > 0) {
+    if (sim.activeHouses.length > 0) {
         const cx = Math.floor(c.x / TILE_SIZE), cy = Math.floor(c.y / TILE_SIZE);
         let best = null, bestDSq = Infinity;
-        for (const h of activeHouses) {
+        for (const h of sim.activeHouses) {
             const dx = h.tx - cx, dy = h.ty - cy;
             const dSq = dx * dx + dy * dy;
             if (dSq < bestDSq) { bestDSq = dSq; best = h; }
         }
         c._workTX = best.tx;
         c._workTY = best.ty;
-        c._setTargetTile(best.tx, best.ty, grid);
+        c._setTargetTile(best.tx, best.ty, sim.grid);
     } else {
         // No houses to hide in — flee toward the town center instead of
         // freezing in the open where kill-objective raiders execute them.
@@ -109,7 +80,7 @@ function assignCitizenToHide(c) {
         if (flee) {
             c._workTX = flee.tx;
             c._workTY = flee.ty;
-            c._setTargetTile(flee.tx, flee.ty, grid);
+            c._setTargetTile(flee.tx, flee.ty, sim.grid);
         } else {
             c._workTX = -1;
             c._workTY = -1;
@@ -145,9 +116,9 @@ function demolishPlayerStructure(tx, ty) {
     if (s.def.key === 'house') gameState.housesBuilt = Math.max(0, (gameState.housesBuilt || 0) - 1);
     else if (s.def.key === 'farm') gameState.farmsBuilt = Math.max(0, (gameState.farmsBuilt || 0) - 1);
     gameState.housing = Math.max(0, gameState.housing - (s.def.housing || 0));
-    delete _tier2Upgrades[`${px},${py}`];
-    grid.demolish(px, py);
-    grid.structures[py][px] = createRubble();
+    delete sim.tier2Upgrades[`${px},${py}`];
+    sim.grid.demolish(px, py);
+    sim.grid.structures[py][px] = createRubble();
     playDemolishSFX();
     patchStaticCache(px, py, dw, dh);
     rebuildStructureLists();
@@ -156,16 +127,16 @@ function demolishPlayerStructure(tx, ty) {
 }
 
 function handleGridClick(clientX, clientY) {
-    if (!gameState.started || gameIsPaused) return;
-    if (userPaused) {
+    if (!gameState.started || sim.gameIsPaused) return;
+    if (sim.userPaused) {
         const rect = canvas.getBoundingClientRect();
-        const wx = (clientX - rect.left) / camera.zoom + camera.x;
-        const wy = (clientY - rect.top) / camera.zoom + camera.y;
+        const wx = (clientX - rect.left) / sim.camera.zoom + sim.camera.x;
+        const wy = (clientY - rect.top) / sim.camera.zoom + sim.camera.y;
         spawnParticle(wx, wy, 'floating_text', 0.8, 'Paused', '#ffdd57');
         return;
     }
-    const { tx, ty } = grid.screenToGrid(clientX, clientY);
-    if (!grid.inBounds(tx, ty)) return;
+    const { tx, ty } = sim.grid.screenToGrid(clientX, clientY);
+    if (!sim.grid.inBounds(tx, ty)) return;
 
     const R = calcTerritoryRadius();
     const isOutside = Math.hypot(tx - 32, ty - 32) > R;
@@ -180,7 +151,7 @@ function handleGridClick(clientX, clientY) {
         if (s && s.def.key === 'obstacle_tree') {
             if (gameState.gold < 10) return;
             gameState.gold -= 10;
-            grid.demolish(tx, ty);
+            sim.grid.demolish(tx, ty);
             playChopSFX();
             patchStaticCache(tx, ty);
             rebuildStructureLists();
@@ -194,7 +165,7 @@ function handleGridClick(clientX, clientY) {
         if (s && s.def.key === 'rubble') {
             if (gameState.gold < 15) return;
             gameState.gold -= 15;
-            grid.structures[ty][tx] = null;
+            sim.grid.structures[ty][tx] = null;
             playRubbleSFX();
             spawnParticle(tx * TILE_SIZE + TILE_SIZE / 2, ty * TILE_SIZE + TILE_SIZE / 2, 'puff', 0.4);
             patchStaticCache(tx, ty);
@@ -206,10 +177,10 @@ function handleGridClick(clientX, clientY) {
 
     if (gameState.selectedTool === 'road') {
         if (gameState.gold < ROAD_COST) return;
-        if (grid.structures[ty][tx]) return; // occupied by structure or tree
-        if (grid.tiles[ty][tx] === 'tile_road') return; // already a road
+        if (sim.grid.structures[ty][tx]) return; // occupied by structure or tree
+        if (sim.grid.tiles[ty][tx] === 'tile_road') return; // already a road
         gameState.gold -= ROAD_COST;
-        grid.tiles[ty][tx] = 'tile_road';
+        sim.grid.tiles[ty][tx] = 'tile_road';
         playRoadSFX();
         patchStaticCache(tx, ty);
         refreshUI();
@@ -218,9 +189,9 @@ function handleGridClick(clientX, clientY) {
 
     if (gameState.selectedTool === 'demolish') {
         // Demolish road tile
-        if (grid.tiles[ty][tx] === 'tile_road' && !grid.structures[ty][tx]) {
+        if (sim.grid.tiles[ty][tx] === 'tile_road' && !sim.grid.structures[ty][tx]) {
             gameState.gold += 2; // 50% refund of 5g cost
-            grid.tiles[ty][tx] = 'tile_grass';
+            sim.grid.tiles[ty][tx] = 'tile_grass';
             playDemolishSFX();
             patchStaticCache(tx, ty);
             refreshUI();
@@ -234,11 +205,11 @@ function handleGridClick(clientX, clientY) {
     if (!gameState.selectedTool) {
         // Clicking the merchant while he's still on the map reopens the trade
         // screen (an accidental FAREWELL is no longer permanent).
-        if (merchantNPC && (merchantNPC.state === 'trading' || merchantNPC.state === 'departing')) {
-            const mtx = Math.floor(merchantNPC.x / TILE_SIZE);
-            const mty = Math.floor(merchantNPC.y / TILE_SIZE);
+        if (sim.merchantNPC && (sim.merchantNPC.state === 'trading' || sim.merchantNPC.state === 'departing')) {
+            const mtx = Math.floor(sim.merchantNPC.x / TILE_SIZE);
+            const mty = Math.floor(sim.merchantNPC.y / TILE_SIZE);
             if (Math.abs(tx - mtx) <= 1 && Math.abs(ty - mty) <= 1) {
-                merchantNPC.state = 'trading';
+                sim.merchantNPC.state = 'trading';
                 openTradeModal();
                 return;
             }
@@ -277,15 +248,15 @@ function handleGridClick(clientX, clientY) {
     const stoneCost = def.stoneCost || 0;
     const w = def.width || 1;
     const h = def.height || 1;
-    if (gameState.gold < cost || gameState.wood < woodCost || gameState.iron < ironCost || gameState.stone < stoneCost || !grid.canPlace(tx, ty, w, h)) return;
+    if (gameState.gold < cost || gameState.wood < woodCost || gameState.iron < ironCost || gameState.stone < stoneCost || !sim.grid.canPlace(tx, ty, w, h)) return;
     gameState.gold    -= cost;
     gameState.wood    -= woodCost;
     gameState.iron    -= ironCost;
     gameState.stone   -= stoneCost;
     gameState.housing += (def.housing || 0);
     const needsConstruction = def.key === 'academy' || def.key === 'monument';
-    grid.place(tx, ty, def);
-    const s = grid.structures[ty][tx];
+    sim.grid.place(tx, ty, def);
+    const s = sim.grid.structures[ty][tx];
     if (s) {
         if (needsConstruction) s.progress = 0;
         if (def.key === 'gate') {
@@ -308,37 +279,37 @@ function handleGridClick(clientX, clientY) {
 // --- Citizen spawning ---
 function spawnCitizen() {
     let sx, sy;
-    if (activeHouses.length > 0) {
-        const h = activeHouses[Math.floor(Math.random() * activeHouses.length)];
+    if (sim.activeHouses.length > 0) {
+        const h = sim.activeHouses[Math.floor(Math.random() * sim.activeHouses.length)];
         sx = h.tx * TILE_SIZE + TILE_SIZE / 2;
         sy = h.ty * TILE_SIZE + TILE_SIZE / 2;
     } else {
-        sx = (grid.width / 2) * TILE_SIZE;
-        sy = (grid.height / 2) * TILE_SIZE;
+        sx = (sim.grid.width / 2) * TILE_SIZE;
+        sy = (sim.grid.height / 2) * TILE_SIZE;
     }
     const citizen = new Citizen(sx, sy);
     citizens.push(citizen);
     gameState.population++;
-    if (raidActive || _scoutPhase) assignCitizenToHide(citizen);
+    if (sim.raidActive || sim.scoutPhase) assignCitizenToHide(citizen);
     // Proxy marks UI dirty automatically; flushUI() will sync on next frame
 }
 
 // --- Soldiers ---
 function trainSoldier() {
-    const cost = Math.round(UNIT_BALANCE.soldier.goldCost * _soldierCostMult);
+    const cost = Math.round(UNIT_BALANCE.soldier.goldCost * sim.soldierCostMult);
     if (gameState.gold < cost) return;
     const idleIdx = citizens.findIndex(c => c.job === 'idle' && c.state !== 'walking');
     if (idleIdx === -1) return;
-    if (activeBarracks.length === 0) return;
+    if (sim.activeBarracks.length === 0) return;
     gameState.gold -= cost;
     citizens[idleIdx]._alive = false;
     citizens.splice(idleIdx, 1);
     gameState.population = Math.max(0, gameState.population - 1);
-    const b = activeBarracks[Math.floor(Math.random() * activeBarracks.length)];
+    const b = sim.activeBarracks[Math.floor(Math.random() * sim.activeBarracks.length)];
     const sol = new Soldier(b.tx * TILE_SIZE + TILE_SIZE / 2, b.ty * TILE_SIZE + TILE_SIZE / 2);
     let solHp = UNIT_BALANCE.soldier.baseHp;
     if (gameState.upgrades?.iron_discipline) solHp += UNIT_BALANCE.soldier.ironDisciplineHpBonus;
-    if (_tier2Upgrades[`${b.tx},${b.ty}`]) solHp += UNIT_BALANCE.soldier.barracksTier2HpBonus;
+    if (sim.tier2Upgrades[`${b.tx},${b.ty}`]) solHp += UNIT_BALANCE.soldier.barracksTier2HpBonus;
     if (solHp !== UNIT_BALANCE.soldier.baseHp) { sol.hp = solHp; sol.maxHp = solHp; }
     soldiers.push(sol);
     playTrainSFX();
@@ -352,13 +323,13 @@ function trainCaptain() {
     if (gameState.gold < cfg.goldCost || gameState.iron < cfg.ironCost) return;
     const idleIdx = citizens.findIndex(c => c.job === 'idle' && c.state !== 'walking');
     if (idleIdx === -1) return;
-    if (activeBarracks.length === 0) return;
+    if (sim.activeBarracks.length === 0) return;
     gameState.gold -= cfg.goldCost;
     gameState.iron -= cfg.ironCost;
     citizens[idleIdx]._alive = false;
     citizens.splice(idleIdx, 1);
     gameState.population = Math.max(0, gameState.population - 1);
-    const b = activeBarracks[Math.floor(Math.random() * activeBarracks.length)];
+    const b = sim.activeBarracks[Math.floor(Math.random() * sim.activeBarracks.length)];
     const cap = new Soldier(b.tx * TILE_SIZE + TILE_SIZE / 2, b.ty * TILE_SIZE + TILE_SIZE / 2);
     cap.isCaptain = true;
     cap.hp = cfg.baseHp;
@@ -369,7 +340,7 @@ function trainCaptain() {
 }
 
 function updateSoldiers(dtSec, activeRaiders) {
-    for (const sol of soldiers) sol.update(dtSec, grid, activeRaiders);
+    for (const sol of soldiers) sol.update(dtSec, sim.grid, activeRaiders);
 
     // Captain aura: soldiers within range deal bonus melee damage
     const CBcap = COMBAT_BALANCE?.captain;
@@ -417,12 +388,12 @@ function trainArcher() {
     if (gameState.gold < UNIT_BALANCE.archer.goldCost) return;
     const idleIdx = citizens.findIndex(c => c.job === 'idle' && c.state !== 'walking');
     if (idleIdx === -1) return;
-    if (activeArcheryRanges.length === 0) return;
+    if (sim.activeArcheryRanges.length === 0) return;
     gameState.gold -= UNIT_BALANCE.archer.goldCost;
     citizens[idleIdx]._alive = false;
     citizens.splice(idleIdx, 1);
     gameState.population = Math.max(0, gameState.population - 1);
-    const b = activeArcheryRanges[Math.floor(Math.random() * activeArcheryRanges.length)];
+    const b = sim.activeArcheryRanges[Math.floor(Math.random() * sim.activeArcheryRanges.length)];
     archers.push(new Archer(b.tx * TILE_SIZE + TILE_SIZE / 2, b.ty * TILE_SIZE + TILE_SIZE / 2));
     playTrainSFX();
     // Proxy marks UI dirty; flushUI() will sync on next frame
@@ -437,7 +408,7 @@ function updateArchers(dtSec, activeRaiders) {
             window._archerDefenseContext.postCounts.set(key, (window._archerDefenseContext.postCounts.get(key) || 0) + 1);
         }
     }
-    for (const a of archers) a.update(dtSec, grid, activeRaiders);
+    for (const a of archers) a.update(dtSec, sim.grid, activeRaiders);
 }
 
 // --- Knights ---
@@ -445,20 +416,20 @@ function trainKnight() {
     if (gameState.gold < UNIT_BALANCE.knight.goldCost || gameState.iron < UNIT_BALANCE.knight.ironCost) return;
     const idleIdx = citizens.findIndex(c => c.job === 'idle' && c.state !== 'walking');
     if (idleIdx === -1) return;
-    if (activeBarracks.length === 0) return;
+    if (sim.activeBarracks.length === 0) return;
     gameState.gold -= UNIT_BALANCE.knight.goldCost;
     gameState.iron -= UNIT_BALANCE.knight.ironCost;
     citizens[idleIdx]._alive = false;
     citizens.splice(idleIdx, 1);
     gameState.population = Math.max(0, gameState.population - 1);
-    const b = activeBarracks[Math.floor(Math.random() * activeBarracks.length)];
+    const b = sim.activeBarracks[Math.floor(Math.random() * sim.activeBarracks.length)];
     knights.push(new Knight(b.tx * TILE_SIZE + TILE_SIZE / 2, b.ty * TILE_SIZE + TILE_SIZE / 2));
     playTrainSFX();
     // Proxy marks UI dirty; flushUI() will sync on next frame
 }
 
 function updateKnights(dtSec, activeRaiders) {
-    for (const k of knights) k.update(dtSec, grid, activeRaiders);
+    for (const k of knights) k.update(dtSec, sim.grid, activeRaiders);
 
     for (let ki = knights.length - 1; ki >= 0; ki--) {
         const k = knights[ki];
@@ -491,9 +462,9 @@ function updateKnights(dtSec, activeRaiders) {
 function updateGates(dtSec, activeRaiders) {
     const rangeLimitSq = (8 * TILE_SIZE) * (8 * TILE_SIZE);
     const breachLimitSq = (1.5 * TILE_SIZE) * (1.5 * TILE_SIZE);
-    for (const gate of activeGates) {
+    for (const gate of sim.activeGates) {
         const { tx, ty } = gate;
-        const s = grid.structures[ty]?.[tx];
+        const s = sim.grid.structures[ty]?.[tx];
         if (!s || s.def.key !== 'gate') continue;
         const gx = tx * TILE_SIZE + TILE_SIZE / 2;
         const gy = ty * TILE_SIZE + TILE_SIZE / 2;
@@ -510,8 +481,8 @@ function updateGates(dtSec, activeRaiders) {
                     const maxHp = getMaxHP('gate');
                     s.hp = (s.hp ?? maxHp) - (COMBAT_BALANCE?.raider?.gateBreachDps ?? 10) * dtSec;
                     if (s.hp <= 0) {
-                        delete _tier2Upgrades[`${tx},${ty}`];
-                        grid.structures[ty][tx] = createRubble();
+                        delete sim.tier2Upgrades[`${tx},${ty}`];
+                        sim.grid.structures[ty][tx] = createRubble();
                         spawnParticle(gx, gy, 'puff', 0.4);
                         triggerShake(8);
                         patchStaticCache(tx, ty);
@@ -582,20 +553,20 @@ function updateActiveProjectiles(dtSec) {
 
 // --- Raiders ---
 function _startFireAtTile(tx, ty) {
-    const s = grid.structures[ty]?.[tx];
+    const s = sim.grid.structures[ty]?.[tx];
     if (!s || _NON_BURNABLE.has(s.def.key) || (s.progress ?? 1.0) < 1.0) return false;
-    if (incidentManager?.active?.type === 'fire') {
-        const alreadyBurning = incidentManager.active.fires.some(f => f.tx === tx && f.ty === ty);
+    if (sim.incidentManager?.active?.type === 'fire') {
+        const alreadyBurning = sim.incidentManager.active.fires.some(f => f.tx === tx && f.ty === ty);
         if (alreadyBurning) return false;
         if (s.hp === undefined) s.hp = getMaxHP(s.def.key);
-        incidentManager.active.fires.push({ tx, ty, timer: 0 });
+        sim.incidentManager.active.fires.push({ tx, ty, timer: 0 });
         showEventBanner('FIRE!', `A ${s.def.label ?? s.def.key} has been set ablaze!`);
         return true;
     }
-    if (incidentManager?.active) return false;
-    if (!incidentManager) return false;
+    if (sim.incidentManager?.active) return false;
+    if (!sim.incidentManager) return false;
     if (s.hp === undefined) s.hp = getMaxHP(s.def.key);
-    incidentManager.active = { type: 'fire', fires: [{ tx, ty, timer: 0 }], spreadTimer: 0, timer: 0, duration: 15 };
+    sim.incidentManager.active = { type: 'fire', fires: [{ tx, ty, timer: 0 }], spreadTimer: 0, timer: 0, duration: 15 };
     showEventBanner('FIRE!', `A ${s.def.label ?? s.def.key} has been set ablaze!`);
     playFireSFX();
     return true;
@@ -621,25 +592,25 @@ function getRaidWaveSize(waveNum) {
 // Difficulty (and diplomacy penalties like raid_strong) scale the wave via
 // raidStrength relative to the Lord baseline. Previously raidStrength was
 // saved/migrated but never read — difficulty had no effect on raids at all.
-function getScaledWaveSize(waveNum, strength = raidStrength) {
+function getScaledWaveSize(waveNum, strength = sim.raidStrength) {
     const base = getRaidWaveSize(waveNum);
     if (base <= 0) return 0;
     const lordBaseline = getRaidStrengthForWave(Math.min(waveNum, FINAL_RAID_WAVE), 'lord');
     let mult = lordBaseline > 0 ? strength / lordBaseline : 1;
     // Each standing raider camp emboldens the raids — raze them (ATTACK mode)
-    mult *= 1 + (COMBAT_BALANCE?.camp?.waveSizeBonusPerCamp ?? 0.15) * (raiderCamps?.length || 0);
+    mult *= 1 + (COMBAT_BALANCE?.camp?.waveSizeBonusPerCamp ?? 0.15) * (sim.raiderCamps?.length || 0);
     return Math.max(1, Math.round(base * mult));
 }
 
 // ===================== RAIDER CAMPS =====================
 function maybeSpawnRaiderCamp(waveNum) {
-    if (waveNum < 3 || raiderCamps.length >= 2 || Math.random() >= 0.45) return false;
+    if (waveNum < 3 || sim.raiderCamps.length >= 2 || Math.random() >= 0.45) return false;
     const angle = Math.random() * Math.PI * 2;
     const distTiles = 24 + Math.random() * 5;
     const tx = Math.max(2, Math.min(GRID_WIDTH - 3, Math.round(32 + Math.cos(angle) * distTiles)));
     const ty = Math.max(2, Math.min(GRID_HEIGHT - 3, Math.round(32 + Math.sin(angle) * distTiles)));
     const campHp = COMBAT_BALANCE?.camp?.hp ?? 300;
-    raiderCamps.push({
+    sim.raiderCamps.push({
         x: tx * TILE_SIZE + TILE_SIZE / 2,
         y: ty * TILE_SIZE + TILE_SIZE / 2,
         hp: campHp,
@@ -651,11 +622,11 @@ function maybeSpawnRaiderCamp(waveNum) {
 // Melee exchange between assaulting soldiers/knights and camps; runs every
 // frame but exits immediately when no camps exist.
 function updateCampAssault(dtSec) {
-    if (!raiderCamps.length) return;
+    if (!sim.raiderCamps.length) return;
     const CB = COMBAT_BALANCE;
     const rangeSq = (1.5 * TILE_SIZE) * (1.5 * TILE_SIZE);
-    for (let ci = raiderCamps.length - 1; ci >= 0; ci--) {
-        const camp = raiderCamps[ci];
+    for (let ci = sim.raiderCamps.length - 1; ci >= 0; ci--) {
+        const camp = sim.raiderCamps[ci];
         for (const list of [soldiers, knights]) {
             for (let ui = list.length - 1; ui >= 0; ui--) {
                 const u = list[ui];
@@ -679,10 +650,10 @@ function updateCampAssault(dtSec) {
             }
         }
         if (camp.hp <= 0) {
-            raiderCamps.splice(ci, 1);
+            sim.raiderCamps.splice(ci, 1);
             const reward = CB?.camp?.destroyReward ?? 100;
             gameState.gold += reward;
-            setRaidTimer(raidTimer + (CB?.camp?.destroyRaidDelaySec ?? 45));
+            sim.raidTimer = sim.raidTimer + (CB?.camp?.destroyRaidDelaySec ?? 45);
             showEventBanner('CAMP DESTROYED!', `+${reward} gold — the next raid is delayed and weakened.`);
             spawnParticle(camp.x, camp.y, 'puff', 0.6);
             triggerShake(4);
@@ -699,7 +670,7 @@ function chooseRaidDirections(waveNum, waveSize) {
 }
 
 function getSpawnPos(dir) {
-    const W = grid.width * TILE_SIZE, H = grid.height * TILE_SIZE, off = TILE_SIZE;
+    const W = sim.grid.width * TILE_SIZE, H = sim.grid.height * TILE_SIZE, off = TILE_SIZE;
     switch (dir) {
         case 'N':  return { x: W * 0.2 + Math.random() * W * 0.6, y: -off };
         case 'S':  return { x: W * 0.2 + Math.random() * W * 0.6, y: H + off };
@@ -745,11 +716,11 @@ function _buildRaidPlan(waveNum) {
 
 // Enters the 30s scout warning with a concrete preview of the incoming wave.
 function beginScoutPhase() {
-    setRaidTimer(0);
-    setRaidQueued(false);
-    setScoutPhase(true);
-    setScoutTimer(30);
-    _raidPlan = _buildRaidPlan(raidCount + 1);
+    sim.raidTimer = 0;
+    sim.raidQueued = false;
+    sim.scoutPhase = true;
+    sim.scoutTimer = 30;
+    _raidPlan = _buildRaidPlan(sim.raidCount + 1);
     const comp = [];
     if (_raidPlan.torch) comp.push(`${_raidPlan.torch} torch`);
     if (_raidPlan.siege) comp.push(`${_raidPlan.siege} siege`);
@@ -757,21 +728,21 @@ function beginScoutPhase() {
     showEventBanner('SCOUTS SPOTTED!',
         `${_raidPlan.size} raiders${compStr} from the ${_raidPlan.dirs.join('/')} — close your gates!`);
     playRaidWarningSFX();
-    setRaidWarningPlayed(true);
+    sim.raidWarningPlayed = true;
 }
 
 function startRaidWave() {
-    const waveNum = raidCount + 1;
+    const waveNum = sim.raidCount + 1;
     if (waveNum > FINAL_RAID_WAVE && !gameState.endless) return;
     _raidersDefeatedAtWaveStart = gameState.raidersDefeated || 0;
-    setRaidActive(true);
-    setRaidActiveTimer(0);
-    setRaidTimer(0);
-    setScoutPhase(false);
-    setScoutTimer(0);
-    setRaidQueued(false);
-    setRaidBuildingsDestroyed(0);
-    setRaidCitizensKilled(0);
+    sim.raidActive = true;
+    sim.raidActiveTimer = 0;
+    sim.raidTimer = 0;
+    sim.scoutPhase = false;
+    sim.scoutTimer = 0;
+    sim.raidQueued = false;
+    sim.raidBuildingsDestroyed = 0;
+    sim.raidCitizensKilled = 0;
     // raid-warning vignette is owned by updateRaidHUD (cached class writes) —
     // touching classList directly here would desync its cache
     sendCitizensToHide();
@@ -781,7 +752,7 @@ function startRaidWave() {
     _raidPlan = null;
     showEventBanner(`RAID WAVE ${waveNum}`, `${plan.size} raiders are attacking now!`);
     playRaidWarningSFX();
-    setRaidWarningPlayed(true);
+    sim.raidWarningPlayed = true;
     for (const spawn of plan.spawns) {
         raiders.push(new Raider(spawn.x, spawn.y, spawn.type));
     }
@@ -791,9 +762,9 @@ function updateRaiders(dtSec) {
     for (const r of raiders) r.update(dtSec);
 
     // Tower firing using activeTowers
-    for (const tower of activeTowers) {
+    for (const tower of sim.activeTowers) {
         const { tx, ty } = tower;
-        const s = grid.structures[ty]?.[tx];
+        const s = sim.grid.structures[ty]?.[tx];
         if (!s || s.def.key !== 'tower') continue;
         const id = `${tx}_${ty}`;
         const TB = COMBAT_BALANCE?.tower;
@@ -802,7 +773,7 @@ function updateRaiders(dtSec) {
 
         const towerX = tx * TILE_SIZE + TILE_SIZE / 2;
         const towerY = ty * TILE_SIZE + TILE_SIZE / 2;
-        const isT2Tower = !!_tier2Upgrades[`${tx},${ty}`];
+        const isT2Tower = !!sim.tier2Upgrades[`${tx},${ty}`];
         const RANGE = (isT2Tower ? (TB?.tier2RangeTiles ?? 10) : (TB?.rangeTiles ?? 8)) * TILE_SIZE;
         const RANGESQ = RANGE * RANGE;
         let closest = null, closestDistSq = Infinity;
@@ -828,9 +799,9 @@ function updateRaiders(dtSec) {
     }
 
     // Ballista tower firing using activeBallistaTowers
-    for (const bt of activeBallistaTowers) {
+    for (const bt of sim.activeBallistaTowers) {
         const { tx, ty } = bt;
-        const s = grid.structures[ty]?.[tx];
+        const s = sim.grid.structures[ty]?.[tx];
         if (!s || s.def.key !== 'ballista_tower') continue;
         const id = `bt_${tx}_${ty}`;
         towerFireTimers[id] = (towerFireTimers[id] || 0) + dtSec;
@@ -855,8 +826,8 @@ function updateRaiders(dtSec) {
 
     let rj = 0;
     const offscreenMargin = TILE_SIZE * 6;
-    const maxX = grid.width * TILE_SIZE + offscreenMargin;
-    const maxY = grid.height * TILE_SIZE + offscreenMargin;
+    const maxX = sim.grid.width * TILE_SIZE + offscreenMargin;
+    const maxY = sim.grid.height * TILE_SIZE + offscreenMargin;
     for (let i = 0; i < raiders.length; i++) {
         const r = raiders[i];
         const invalidPosition = !Number.isFinite(r.x) || !Number.isFinite(r.y);
@@ -917,16 +888,16 @@ function updateEffects(dtSec) {
 // updateRaidHUD and showModal are imported from ui.js (single source of truth).
 
 function resolveRaid() {
-    if (!raidActive) return;
-    setRaidActive(false);
+    if (!sim.raidActive) return;
+    sim.raidActive = false;
     // Outcome is decided by what actually happened during the fight, not by a
     // static defense-vs-strength comparison: a raid is repelled when the town
     // kept its buildings and people mostly intact.
-    const waveNum = raidCount + 1;
+    const waveNum = sim.raidCount + 1;
     const waveSize = getRaidWaveSize(waveNum);
     const killsThisWave = Math.max(0, (gameState.raidersDefeated || 0) - _raidersDefeatedAtWaveStart);
-    const isVictory = raidBuildingsDestroyed <= Math.max(1, Math.floor(waveSize * 0.1))
-                   && raidCitizensKilled   <= Math.max(1, Math.floor(waveSize * 0.15));
+    const isVictory = sim.raidBuildingsDestroyed <= Math.max(1, Math.floor(waveSize * 0.1))
+                   && sim.raidCitizensKilled   <= Math.max(1, Math.floor(waveSize * 0.15));
     for (const r of raiders) {
         if (r.state !== 'walking') continue;
         if (isVictory) {
@@ -934,7 +905,7 @@ function resolveRaid() {
         } else {
             r.state = 'defeat'; r._defeatTimer = 0;
             r._defeatFromX = r.x; r._defeatFromY = r.y;
-            r._defeatTargetX = r.x < grid.width * TILE_SIZE / 2 ? -TILE_SIZE * 3 : (grid.width + 3) * TILE_SIZE;
+            r._defeatTargetX = r.x < sim.grid.width * TILE_SIZE / 2 ? -TILE_SIZE * 3 : (sim.grid.width + 3) * TILE_SIZE;
             r._defeatTargetY = r.y;
         }
     }
@@ -943,7 +914,7 @@ function resolveRaid() {
         const reward = 50 + waveNum * 40 + killsThisWave * 2;
         gameState.gold += reward;
         if (waveNum >= FINAL_RAID_WAVE && !gameState.endless) {
-            setRaidCount(FINAL_RAID_WAVE);
+            sim.raidCount = FINAL_RAID_WAVE;
             stopRaidWarningSFX();
             triggerVictory('wave10');
             return;
@@ -951,8 +922,8 @@ function resolveRaid() {
         const lines = [
             `Wave ${waveNum} repelled!`,
             `Raiders slain: ${killsThisWave}`,
-            `Buildings lost: ${raidBuildingsDestroyed}`,
-            `Citizens slain: ${raidCitizensKilled}`,
+            `Buildings lost: ${sim.raidBuildingsDestroyed}`,
+            `Citizens slain: ${sim.raidCitizensKilled}`,
             `+${reward} Gold rewarded`,
         ];
         if (maybeSpawnRaiderCamp(waveNum)) {
@@ -965,8 +936,8 @@ function resolveRaid() {
         const lines = [
             `Wave ${waveNum} broke through!`,
             `Raiders slain: ${killsThisWave}`,
-            `Buildings destroyed: ${raidBuildingsDestroyed}`,
-            `Citizens slain: ${raidCitizensKilled}`,
+            `Buildings destroyed: ${sim.raidBuildingsDestroyed}`,
+            `Citizens slain: ${sim.raidCitizensKilled}`,
         ];
         if (goldLost > 0) lines.push(`Gold pillaged: -${goldLost}`);
         if (maybeSpawnRaiderCamp(waveNum)) {
@@ -979,19 +950,19 @@ function resolveRaid() {
 
 document.getElementById('modal-continue').addEventListener('click', () => {
     document.getElementById('raid-modal').classList.remove('open');
-    setRaidTimer(RAID_DURATION);
-    const completedWave = raidCount + 1;
+    sim.raidTimer = RAID_DURATION;
+    const completedWave = sim.raidCount + 1;
     const nextWave = completedWave + 1;
     // Reset any raid_strong penalty back to the difficulty preset for the next
     // wave (clamped to the final scripted wave's strength in endless mode).
-    setRaidStrength(getRaidStrengthForWave(Math.min(nextWave, FINAL_RAID_WAVE)));
-    setRaidCount(completedWave);
-    setRaidWarningPlayed(false);
-    setRaidWarningSpawnCount(0);
-    setRaidActive(false);
-    setScoutPhase(false);
-    setScoutTimer(0);
-    setRaidActiveTimer(0);
+    sim.raidStrength = getRaidStrengthForWave(Math.min(nextWave, FINAL_RAID_WAVE));
+    sim.raidCount = completedWave;
+    sim.raidWarningPlayed = false;
+    sim.raidWarningSpawnCount = 0;
+    sim.raidActive = false;
+    sim.scoutPhase = false;
+    sim.scoutTimer = 0;
+    sim.raidActiveTimer = 0;
     raiders.length = 0;
     for (const c of citizens) {
         if (c.job === 'hiding' || c.job === 'rebel') {
@@ -1002,7 +973,7 @@ document.getElementById('modal-continue').addEventListener('click', () => {
             c._workTY = -1;
         }
     }
-    if (incidentManager) incidentManager.resetTimer();
+    if (sim.incidentManager) sim.incidentManager.resetTimer();
     projectiles.length = 0;
     activeProjectiles.length = 0;
     particles.length = 0;
@@ -1012,15 +983,15 @@ document.getElementById('modal-continue').addEventListener('click', () => {
         triggerVictory('wave10');
         return;
     }
-    setGameIsPaused(false);
+    sim.gameIsPaused = false;
     refreshUI();
     updateRaidHUD();
 });
 
 document.getElementById('trade-close').addEventListener('click', () => {
     document.getElementById('trade-modal').classList.remove('open');
-    setGameIsPaused(false);
-    if (merchantNPC && merchantNPC.state === 'trading') merchantNPC.state = 'departing';
+    sim.gameIsPaused = false;
+    if (sim.merchantNPC && sim.merchantNPC.state === 'trading') sim.merchantNPC.state = 'departing';
 });
 
 
@@ -1056,9 +1027,9 @@ function loadAndStart(slotKey) {
     initAudio();
     document.getElementById('start-screen').style.display = 'none';
     gameState.started = true;
-    setGameIsPaused(false);
-    setUserPaused(false);
-    setTimeScale(1);
+    sim.gameIsPaused = false;
+    sim.userPaused = false;
+    sim.timeScale = 1;
     if (window.updateTimePauseUI) window.updateTimePauseUI();
     lastTime = 0;
 }
@@ -1108,7 +1079,7 @@ function assignCitizenJobs() {
     for (const c of citizens) {
         if (c.job === 'idle' && c.state !== 'walking') idleQueue.push(c);
         if (c._workTX !== -1 && c._workTY !== -1) {
-            const s = grid.structures[c._workTY]?.[c._workTX];
+            const s = sim.grid.structures[c._workTY]?.[c._workTX];
             const expectedJob = s ? _JOB_FOR_KEY[s.def.key] : null;
             const key = `${c._workTX},${c._workTY}`;
             if (c.job === 'builder') {
@@ -1133,8 +1104,8 @@ function assignCitizenJobs() {
         workerCounts[oldKey] = Math.max(0, (workerCounts[oldKey] || 1) - 1);
         return worker;
     };
-    for (const { tx, ty } of underConstruction) {
-        const s = grid.structures[ty][tx];
+    for (const { tx, ty } of sim.underConstruction) {
+        const s = sim.grid.structures[ty][tx];
         if (!s || s.progress === undefined || s.progress >= 1.0) continue;
         const key = `${tx},${ty}`;
         if (hasBuilder[key]) continue;
@@ -1151,9 +1122,9 @@ function assignCitizenJobs() {
 
     // Assign resource-gathering workers to completed workplaces (iterate maintained list,
     // not the full grid). At most one new worker per workplace per call, as before.
-    for (const { tx, ty, def } of jobfulStructures) {
+    for (const { tx, ty, def } of sim.jobfulStructures) {
         if (qi >= idleQueue.length) break;
-        const s = grid.structures[ty][tx];
+        const s = sim.grid.structures[ty][tx];
         if (!s || (s.progress ?? 1.0) < 1.0) continue;
         const key = `${tx},${ty}`;
         const workerCount = workerCounts[key] || 0;
@@ -1170,9 +1141,9 @@ function assignCitizenJobs() {
 
     // Assign builders to under-construction buildings (maintained list; completed entries
     // are skipped here and pruned on the next rebuildStructureLists).
-    for (const { tx, ty } of underConstruction) {
+    for (const { tx, ty } of sim.underConstruction) {
         if (qi >= idleQueue.length) break;
-        const s = grid.structures[ty][tx];
+        const s = sim.grid.structures[ty][tx];
         if (!s || s.progress === undefined || s.progress >= 1.0) continue;
         const key = `${tx},${ty}`;
         if (hasBuilder[key]) continue;
@@ -1188,7 +1159,7 @@ function assignCitizenJobs() {
 function updatePassiveFarmProduction(dtSec) {
     // "Farms are barren" — drought halts passive output too (worker harvests
     // already checked droughtActive; passive production silently didn't).
-    if (droughtActive) { passiveFarmTimer = 0; return; }
+    if (sim.droughtActive) { passiveFarmTimer = 0; return; }
     passiveFarmTimer += dtSec;
     const cycleSec = window.PRODUCTION_BALANCE?.farmCycleSec ?? 2.0;
     if (passiveFarmTimer < cycleSec) return;
@@ -1197,8 +1168,8 @@ function updatePassiveFarmProduction(dtSec) {
     passiveFarmTimer -= cycles * cycleSec;
 
     let completedFarmCount = 0;
-    for (const { tx, ty } of activeFarms) {
-        const s = grid.structures[ty]?.[tx];
+    for (const { tx, ty } of sim.activeFarms) {
+        const s = sim.grid.structures[ty]?.[tx];
         if (s && s.def.key === 'farm' && (s.progress ?? 1.0) >= 1.0) {
             completedFarmCount++;
         }
@@ -1214,7 +1185,7 @@ function updatePassiveFarmProduction(dtSec) {
 function updateCitizensSafely(dtSec, timestamp = performance.now()) {
     for (const c of citizens) {
         try {
-            c.update(dtSec, grid);
+            c.update(dtSec, sim.grid);
         } catch (err) {
             if (timestamp - _lastCitizenUpdateErrorTime > 1000) {
                 _lastCitizenUpdateErrorTime = timestamp;
@@ -1231,9 +1202,9 @@ function regrowNature() {
     if (gameState.season === 'Winter') return; // nothing grows in winter
     const trees = [];
     let stoneCount = 0, ironCount = 0;
-    for (let ty = 0; ty < grid.height; ty++) {
-        for (let tx = 0; tx < grid.width; tx++) {
-            const s = grid.structures[ty][tx];
+    for (let ty = 0; ty < sim.grid.height; ty++) {
+        for (let tx = 0; tx < sim.grid.width; tx++) {
+            const s = sim.grid.structures[ty][tx];
             if (!s) continue;
             if (s.def.key === 'obstacle_tree') trees.push({ tx, ty });
             else if (s.def.key === 'stone_deposit') stoneCount++;
@@ -1249,22 +1220,22 @@ function regrowNature() {
             const dirs = [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }];
             const d = dirs[Math.floor(Math.random() * dirs.length)];
             const nx = t.tx + d.dx, ny = t.ty + d.dy;
-            if (!grid.inBounds(nx, ny)) continue;
-            if (grid.structures[ny][nx] || grid.tiles[ny][nx] !== 'tile_grass') continue;
+            if (!sim.grid.inBounds(nx, ny)) continue;
+            if (sim.grid.structures[ny][nx] || sim.grid.tiles[ny][nx] !== 'tile_grass') continue;
             newTrees.push({ tx: nx, ty: ny });
         }
     }
     for (const { tx, ty } of newTrees) {
-        if (grid.structures[ty][tx]) continue;
-        grid.structures[ty][tx] = { def: TREE_DEF };
+        if (sim.grid.structures[ty][tx]) continue;
+        sim.grid.structures[ty][tx] = { def: TREE_DEF };
         patchStaticCache(tx, ty);
     }
     const spawnDeposit = (def, hp) => {
         for (let tries = 0; tries < 24; tries++) {
-            const tx = Math.floor(Math.random() * grid.width);
-            const ty = Math.floor(Math.random() * grid.height);
-            if (grid.structures[ty][tx] || grid.tiles[ty][tx] !== 'tile_grass') continue;
-            grid.structures[ty][tx] = { def, hp };
+            const tx = Math.floor(Math.random() * sim.grid.width);
+            const ty = Math.floor(Math.random() * sim.grid.height);
+            if (sim.grid.structures[ty][tx] || sim.grid.tiles[ty][tx] !== 'tile_grass') continue;
+            sim.grid.structures[ty][tx] = { def, hp };
             patchStaticCache(tx, ty);
             return;
         }
@@ -1276,12 +1247,12 @@ function regrowNature() {
 function updateRubbleDecay(dtSec) {
     // Iterates the maintained rubble list instead of sweeping all 4096 tiles per frame.
     let changed = false;
-    for (const { tx, ty } of activeRubble) {
-        const s = grid.structures[ty][tx];
+    for (const { tx, ty } of sim.activeRubble) {
+        const s = sim.grid.structures[ty][tx];
         if (!s || s.def.key !== 'rubble') continue;
         s.decayTimer = (s.decayTimer ?? DAY_DURATION) - dtSec;
         if (s.decayTimer <= 0) {
-            grid.structures[ty][tx] = null;
+            sim.grid.structures[ty][tx] = null;
             patchStaticCache(tx, ty);
             changed = true;
         }
@@ -1298,66 +1269,66 @@ function update(dtMs) {
     // Flush any pending reactive UI updates (from gameState Proxy dirty flag)
     flushUI();
     updateCameraShake();
-    if (gameState.started && !userPaused) updateEffects(dtMs / 1000);
+    if (gameState.started && !sim.userPaused) updateEffects(dtMs / 1000);
     // Overlay alpha interpolates in real time (not paused, not time-scaled)
     const _dtReal = dtMs / 1000;
-    const _targetOverlayAlpha = { dawn: 0.15, day: 0.0, dusk: 0.15, night: 0.55 }[_dayPhase] ?? 0;
-    setOverlayAlpha(_overlayAlpha + (_targetOverlayAlpha - _overlayAlpha) * Math.min(1, _dtReal / 3));
-    if (!gameState.started || gameIsPaused || userPaused) return;
-    const dtSec = (dtMs / 1000) * timeScale;
-    setGriefPenalty(Math.max(0, _griefPenalty - dtSec * 0.25));
+    const _targetOverlayAlpha = { dawn: 0.15, day: 0.0, dusk: 0.15, night: 0.55 }[sim.dayPhase] ?? 0;
+    sim.overlayAlpha = sim.overlayAlpha + (_targetOverlayAlpha - sim.overlayAlpha) * Math.min(1, _dtReal / 3);
+    if (!gameState.started || sim.gameIsPaused || sim.userPaused) return;
+    const dtSec = (dtMs / 1000) * sim.timeScale;
+    sim.griefPenalty = Math.max(0, sim.griefPenalty - dtSec * 0.25);
     // Frame-rate independent, zoom-compensated panning (was 10px per FRAME,
     // which panned 2.4× faster on a 144Hz monitor than at 60Hz).
-    const panSpeed = 600 * _dtReal / camera.zoom;
-    if (keys['w'] || keys['arrowup'])    camera.y -= panSpeed;
-    if (keys['s'] || keys['arrowdown'])  camera.y += panSpeed;
-    if (keys['a'] || keys['arrowleft'])  camera.x -= panSpeed;
-    if (keys['d'] || keys['arrowright']) camera.x += panSpeed;
-    const maxCameraX = Math.max(0, grid.width  * TILE_SIZE - canvas.width  / camera.zoom);
-    const maxCameraY = Math.max(0, grid.height * TILE_SIZE - canvas.height / camera.zoom);
-    camera.x = Math.max(0, Math.min(maxCameraX, camera.x));
-    camera.y = Math.max(0, Math.min(maxCameraY, camera.y));
+    const panSpeed = 600 * _dtReal / sim.camera.zoom;
+    if (keys['w'] || keys['arrowup'])    sim.camera.y -= panSpeed;
+    if (keys['s'] || keys['arrowdown'])  sim.camera.y += panSpeed;
+    if (keys['a'] || keys['arrowleft'])  sim.camera.x -= panSpeed;
+    if (keys['d'] || keys['arrowright']) sim.camera.x += panSpeed;
+    const maxCameraX = Math.max(0, sim.grid.width  * TILE_SIZE - canvas.width  / sim.camera.zoom);
+    const maxCameraY = Math.max(0, sim.grid.height * TILE_SIZE - canvas.height / sim.camera.zoom);
+    sim.camera.x = Math.max(0, Math.min(maxCameraX, sim.camera.x));
+    sim.camera.y = Math.max(0, Math.min(maxCameraY, sim.camera.y));
 
-    if (!raidActive) {
+    if (!sim.raidActive) {
         // A raid queued during daylight launches its 30s scout warning at dusk
         // (dayTimer >= 42), so the wave lands around nightfall. A hard 45s cap
         // guarantees the queue can never stall silently; the HUD shows a live
         // countdown to dusk the whole time.
-        if (_raidQueued && !_scoutPhase) {
-            setRaidTimer(raidTimer + dtSec); // elapsed-while-queued safety counter
-            const _qPhase = _getDayPhase(dayTimer);
-            if (_qPhase === 'dusk' || _qPhase === 'night' || raidTimer >= 45) {
+        if (sim.raidQueued && !sim.scoutPhase) {
+            sim.raidTimer = sim.raidTimer + dtSec; // elapsed-while-queued safety counter
+            const _qPhase = _getDayPhase(sim.dayTimer);
+            if (_qPhase === 'dusk' || _qPhase === 'night' || sim.raidTimer >= 45) {
                 beginScoutPhase();
             }
         }
-        if (raidCount >= FINAL_RAID_WAVE && !gameState.endless) {
-            setRaidTimer(0);
-            setRaidQueued(false);
-            setScoutPhase(false);
-        } else if (_scoutPhase) {
-            setScoutTimer(_scoutTimer - dtSec);
-            if (_scoutTimer <= 0) { setScoutPhase(false); startRaidWave(); }
-        } else if (!_raidQueued) {
-            setRaidTimer(raidTimer - dtSec);
-            if (raidTimer <= 0) {
-                const _rPhase = _getDayPhase(dayTimer);
-                if (_allianceTimer > 0) {
-                    setRaidTimer(RAID_DURATION); // alliance suppresses this raid
-                } else if (raidCount === 0 || _rPhase === 'dusk' || _rPhase === 'night') {
+        if (sim.raidCount >= FINAL_RAID_WAVE && !gameState.endless) {
+            sim.raidTimer = 0;
+            sim.raidQueued = false;
+            sim.scoutPhase = false;
+        } else if (sim.scoutPhase) {
+            sim.scoutTimer = sim.scoutTimer - dtSec;
+            if (sim.scoutTimer <= 0) { sim.scoutPhase = false; startRaidWave(); }
+        } else if (!sim.raidQueued) {
+            sim.raidTimer = sim.raidTimer - dtSec;
+            if (sim.raidTimer <= 0) {
+                const _rPhase = _getDayPhase(sim.dayTimer);
+                if (sim.allianceTimer > 0) {
+                    sim.raidTimer = RAID_DURATION; // alliance suppresses this raid
+                } else if (sim.raidCount === 0 || _rPhase === 'dusk' || _rPhase === 'night') {
                     beginScoutPhase();
                 } else {
-                    setRaidTimer(0);
-                    setRaidQueued(true); // scouts launch at dusk
+                    sim.raidTimer = 0;
+                    sim.raidQueued = true; // scouts launch at dusk
                     showEventBanner('RAIDERS GATHERING', 'They will strike at dusk — prepare your defenses!');
                 }
             }
         }
     } else {
-        setRaidActiveTimer(raidActiveTimer + dtSec);
+        sim.raidActiveTimer = sim.raidActiveTimer + dtSec;
         // Failsafe: a raid that somehow drags past RAID_ACTIVE_TIMEOUT (stuck
         // raider, starved pathfinding) force-retreats every remaining walker so
         // the game can never stall in a permanent raid.
-        if (raidActiveTimer >= RAID_ACTIVE_TIMEOUT) {
+        if (sim.raidActiveTimer >= RAID_ACTIVE_TIMEOUT) {
             for (const r of raiders) {
                 if (r.state !== 'walking') continue;
                 r._attacking = false;
@@ -1377,15 +1348,15 @@ function update(dtMs) {
     }
     updateRaidHUD();
 
-    let nextDayTimer = dayTimer + dtSec;
+    let nextDayTimer = sim.dayTimer + dtSec;
     if (nextDayTimer >= DAY_DURATION) {
         nextDayTimer -= DAY_DURATION;
-        setDayTimer(nextDayTimer);
+        sim.dayTimer = nextDayTimer;
         gameState.day = (gameState.day || 1) + 1;
         if ((gameState.day - 1) % 7 === 0) {
             gameState.season = SEASONS[Math.floor((gameState.day - 1) / 7) % 4];
         }
-        if (gameState.season !== _lastSeason) {
+        if (gameState.season !== sim.lastSeason) {
             const _bannerData = {
                 Spring: { title: 'SPRING HAS ARRIVED', desc: 'Farms bloom. Food yield is increased.' },
                 Summer: { title: 'SUMMER HEAT',        desc: 'Drought risk doubles. Stay prepared.' },
@@ -1395,22 +1366,22 @@ function update(dtMs) {
             const bd = _bannerData[gameState.season];
             if (bd) showEventBanner(bd.title, bd.desc);
             if (gameState.season === 'Autumn') { gameState.food += 20; gameState.food = Math.min(gameState.food, getFoodCap()); }
-            setLastSeason(gameState.season);
+            sim.lastSeason = gameState.season;
         }
         regrowNature();
         updateDaySeason();
     } else {
-        setDayTimer(nextDayTimer);
+        sim.dayTimer = nextDayTimer;
     }
 
     // Day phase tracking — detect transitions and update HUD glyph
-    const _newPhase = _getDayPhase(dayTimer);
-    if (_newPhase !== _dayPhase) {
-        setDayPhase(_newPhase);
+    const _newPhase = _getDayPhase(sim.dayTimer);
+    if (_newPhase !== sim.dayPhase) {
+        sim.dayPhase = _newPhase;
         _updateDayPhaseGlyph();
     }
 
-    setRaidPathBudget(15);
+    sim.raidPathBudget = 15;
     // Rebuild the anti-stacking spatial hash once per frame (coarse bucket grid
     // over citizens/soldiers/archers/knights/raiders) so every unit's per-frame
     // separation check is a handful of bucket lookups instead of an O(n²) scan.
@@ -1418,12 +1389,12 @@ function update(dtMs) {
     // Per-frame melee context: reset target-pile counts and cache the defend
     // rally tile once (soldiers/knights read window._defendRally for the leash).
     window._combatTargetCounts?.clear();
-    window._defendRally = (_combatMode === 'defend' && raidActive && window._getDefendRallyTile)
+    window._defendRally = (sim.combatMode === 'defend' && sim.raidActive && window._getDefendRallyTile)
         ? window._getDefendRallyTile() : null;
     // Refill the shared active-raiders scratch list in place (no allocation) — reused by
     // soldiers, archers, knights, gates.
     _activeRaiders.length = 0;
-    if (raidActive) {
+    if (sim.raidActive) {
         for (let i = 0; i < raiders.length; i++) {
             if (raiders[i].state === 'walking') _activeRaiders.push(raiders[i]);
         }
@@ -1435,12 +1406,12 @@ function update(dtMs) {
     updateKnights(dtSec, _activeRaiders);
     updateCampAssault(dtSec);
 
-    const nextJobScanTimer = jobScanTimer + dtSec;
+    const nextJobScanTimer = sim.jobScanTimer + dtSec;
     if (nextJobScanTimer >= JOB_SCAN_INTERVAL) {
-        setJobScanTimer(0);
+        sim.jobScanTimer = 0;
         assignCitizenJobs();
     } else {
-        setJobScanTimer(nextJobScanTimer);
+        sim.jobScanTimer = nextJobScanTimer;
     }
 
     updateCitizensSafely(dtSec);
@@ -1449,9 +1420,9 @@ function update(dtMs) {
     updatePassiveFarmProduction(dtSec);
     updateRubbleDecay(dtSec);
 
-    const nextTaxTimer = taxTimer + dtSec;
+    const nextTaxTimer = sim.taxTimer + dtSec;
     if (nextTaxTimer >= TAX_INTERVAL) {
-        setTaxTimer(0);
+        sim.taxTimer = 0;
         // Food consumed by population and military each tax tick
         const foodDrainMult = SEASON_MODIFIERS[SEASONS.indexOf(gameState.season)].foodDrainMult;
         const foodDrain = (gameState.population + soldiers.length + archers.length + knights.length) * foodDrainMult;
@@ -1459,7 +1430,7 @@ function update(dtMs) {
         gameState.food = Math.min(gameState.food, getFoodCap());
         gameState.happiness = calcHappiness();
         // Rebel citizens when Joy < 50%
-        if (!raidActive && gameState.happiness < 50 && soldiers.length > 0) {
+        if (!sim.raidActive && gameState.happiness < 50 && soldiers.length > 0) {
             const unhappiness = (50 - gameState.happiness) / 50;
             const targetRebels = Math.max(1, Math.floor(unhappiness * citizens.length * 0.3));
             const currentRebels = citizens.filter(c => c.job === 'rebel').length;
@@ -1492,20 +1463,20 @@ function update(dtMs) {
         }
         // Proxy marks UI dirty; flushUI() syncs at top of next update()
     } else {
-        setTaxTimer(nextTaxTimer);
+        sim.taxTimer = nextTaxTimer;
     }
 
     const si = getSpawnInterval();
     if (gameState.housing > 0 && gameState.population < gameState.housing && si < Infinity) {
-        const nextSpawnTimer = spawnTimer + dtSec;
-        if (nextSpawnTimer >= si) { setSpawnTimer(0); spawnCitizen(); }
-        else setSpawnTimer(nextSpawnTimer);
-    } else { setSpawnTimer(0); }
+        const nextSpawnTimer = sim.spawnTimer + dtSec;
+        if (nextSpawnTimer >= si) { sim.spawnTimer = 0; spawnCitizen(); }
+        else sim.spawnTimer = nextSpawnTimer;
+    } else { sim.spawnTimer = 0; }
 
     if (gameState.happiness < 40 && gameState.population > 0) {
-        const nextEmigrationTimer = emigrationTimer + dtSec;
+        const nextEmigrationTimer = sim.emigrationTimer + dtSec;
         if (nextEmigrationTimer >= EMIGRATION_INTERVAL) {
-            setEmigrationTimer(0);
+            sim.emigrationTimer = 0;
             if (citizens.length > 0) {
                 const idleIdx = citizens.findIndex(c => c.job === 'idle');
                 const removeIdx = idleIdx !== -1 ? idleIdx : Math.floor(Math.random() * citizens.length);
@@ -1515,46 +1486,46 @@ function update(dtMs) {
             gameState.population = Math.max(0, gameState.population - 1);
             // Proxy marks UI dirty; flushUI() syncs at top of next update()
         } else {
-            setEmigrationTimer(nextEmigrationTimer);
+            sim.emigrationTimer = nextEmigrationTimer;
         }
-    } else { setEmigrationTimer(0); }
+    } else { sim.emigrationTimer = 0; }
 
-    const nextAutoSaveTimer = autoSaveTimer + dtSec;
+    const nextAutoSaveTimer = sim.autoSaveTimer + dtSec;
     if (nextAutoSaveTimer >= AUTOSAVE_INTERVAL) {
-        setAutoSaveTimer(0);
+        sim.autoSaveTimer = 0;
         saveGame();
         flashAutosave();
         console.log('[Pixel Dominion] AUTO-SAVING...');
     } else {
-        setAutoSaveTimer(nextAutoSaveTimer);
+        sim.autoSaveTimer = nextAutoSaveTimer;
     }
 
-    if (incidentManager) incidentManager.update(dtSec);
+    if (sim.incidentManager) sim.incidentManager.update(dtSec);
 
     // Diplomacy timer ticks
-    for (let _di = _diplomacyTimers.length - 1; _di >= 0; _di--) {
-        _diplomacyTimers[_di].remainingSec -= dtSec;
-        if (_diplomacyTimers[_di].remainingSec <= 0) {
-            _diplomacyTimers[_di].action();
-            _diplomacyTimers.splice(_di, 1);
+    for (let _di = sim.diplomacyTimers.length - 1; _di >= 0; _di--) {
+        sim.diplomacyTimers[_di].remainingSec -= dtSec;
+        if (sim.diplomacyTimers[_di].remainingSec <= 0) {
+            sim.diplomacyTimers[_di].action();
+            sim.diplomacyTimers.splice(_di, 1);
         }
     }
-    if (_allianceTimer > 0) setAllianceTimer(Math.max(0, _allianceTimer - dtSec));
-    if (_soldierCostTimer > 0) {
-        setSoldierCostTimer(Math.max(0, _soldierCostTimer - dtSec));
-        if (_soldierCostTimer <= 0) setSoldierCostMult(1.0);
+    if (sim.allianceTimer > 0) sim.allianceTimer = Math.max(0, sim.allianceTimer - dtSec);
+    if (sim.soldierCostTimer > 0) {
+        sim.soldierCostTimer = Math.max(0, sim.soldierCostTimer - dtSec);
+        if (sim.soldierCostTimer <= 0) sim.soldierCostMult = 1.0;
     }
 
-    _statsUpdateTimer += dtSec;
-    if (statsOverlayVisible && _statsUpdateTimer >= 0.5) { _statsUpdateTimer = 0; updateStatsOverlay(); }
+    sim.statsUpdateTimer += dtSec;
+    if (sim.statsOverlayVisible && sim.statsUpdateTimer >= 0.5) { sim.statsUpdateTimer = 0; updateStatsOverlay(); }
 
     const newRadius = calcTerritoryRadius();
-    if (newRadius > currentTerritoryRadius) {
-        setCurrentTerritoryRadius(newRadius);
+    if (newRadius > sim.currentTerritoryRadius) {
+        sim.currentTerritoryRadius = newRadius;
         playExpansionSFX();
         showExpansionBanner();
-    } else if (newRadius < currentTerritoryRadius) {
-        setCurrentTerritoryRadius(newRadius);
+    } else if (newRadius < sim.currentTerritoryRadius) {
+        sim.currentTerritoryRadius = newRadius;
     }
 
     // Update active research timer
@@ -1564,8 +1535,8 @@ function update(dtMs) {
     // victoryAchieved guards against re-triggering the modal every frame after
     // the player chooses CONTINUE REIGN.
     if (!gameState.victoryAchieved) {
-        for (const { tx, ty } of activeMonuments) {
-            const s = grid.structures[ty][tx];
+        for (const { tx, ty } of sim.activeMonuments) {
+            const s = sim.grid.structures[ty][tx];
             if (s && (s.progress ?? 1.0) >= 1.0) {
                 triggerVictory('monument');
                 break;
@@ -1575,7 +1546,7 @@ function update(dtMs) {
 
     // Monitor defeat condition — cannot trigger before the first raid begins
     const totalUnits = citizens.length + soldiers.length + archers.length + knights.length;
-    if (totalUnits === 0 && (raidCount > 0 || raidActive)) {
+    if (totalUnits === 0 && (sim.raidCount > 0 || sim.raidActive)) {
         if (gameState.defeatTimer === undefined) gameState.defeatTimer = 10.0;
         gameState.defeatTimer = Math.max(0, gameState.defeatTimer - dtSec);
         
@@ -1607,7 +1578,7 @@ function loop(timestamp) {
             if (fpsTimer >= 500) {
                 fps = Math.round(frameCount / (fpsTimer / 1000));
                 frameCount = 0; fpsTimer = 0;
-                statsEl.textContent = `FPS: ${fps} | Zoom: ${camera.zoom.toFixed(2)}x | Cam: ${Math.round(camera.x)},${Math.round(camera.y)}`;
+                statsEl.textContent = `FPS: ${fps} | Zoom: ${sim.camera.zoom.toFixed(2)}x | Cam: ${Math.round(sim.camera.x)},${Math.round(sim.camera.y)}`;
             }
         }
         update(dt);
@@ -1687,9 +1658,9 @@ document.getElementById('btn-start').addEventListener('click', () => {
     initAudio(); // initialize AudioContext from user gesture (browser autoplay policy)
     document.getElementById('start-screen').style.display = 'none';
     gameState.started = true;
-    setGameIsPaused(false);
-    setUserPaused(false);
-    setTimeScale(1);
+    sim.gameIsPaused = false;
+    sim.userPaused = false;
+    sim.timeScale = 1;
     if (window.updateTimePauseUI) window.updateTimePauseUI();
     lastTime = 0;
     showTutorial(); // Show tutorial on game start
@@ -1734,8 +1705,8 @@ if (gameOverContinueBtn) {
     gameOverContinueBtn.addEventListener('click', () => {
         gameState.endless = true;
         document.getElementById('game-over-modal').classList.remove('open');
-        setGameIsPaused(false);
-        if (raidTimer <= 0) setRaidTimer(RAID_DURATION);
+        sim.gameIsPaused = false;
+        if (sim.raidTimer <= 0) sim.raidTimer = RAID_DURATION;
         showEventBanner('ENDLESS REIGN', 'The raids will keep coming, ever stronger. Hold the line!');
         updateRaidHUD();
     });
@@ -1745,7 +1716,7 @@ if (gameOverContinueBtn) {
 const _btnDefend = document.getElementById('btn-defend-mode');
 const _btnAttack = document.getElementById('btn-attack-mode');
 function applyCombatMode(mode) {
-    setCombatMode(mode);
+    sim.combatMode = mode;
     if (mode === 'defend') {
         for (const s of soldiers) {
             s.state = 'idle';
@@ -1794,7 +1765,7 @@ if (_btnAttack) {
     if (closeBtn) closeBtn.addEventListener('click', () => closeBuildingPanel());
     if (panel) panel.addEventListener('click', e => e.stopPropagation());
     document.addEventListener('click', e => {
-        if (_buildingPanelOpen) {
+        if (sim.buildingPanelOpen) {
             const panel2 = document.getElementById('building-panel');
             if (panel2 && !panel2.contains(e.target)) closeBuildingPanel();
         }
@@ -1808,8 +1779,8 @@ if (_btnAttack) {
     if (!chip || !tooltip) return;
     chip.style.position = 'relative';
     chip.addEventListener('mouseenter', () => {
-        const rows = _happinessFactors.length
-            ? _happinessFactors.map(f =>
+        const rows = sim.happinessFactors.length
+            ? sim.happinessFactors.map(f =>
                 `<div class="ht-row"><span class="ht-label">${f.label}</span><span class="ht-signs ${f.polarity}">${f.signs}</span></div>`
               ).join('')
             : '<div class="ht-row"><span class="ht-label">No active modifiers</span></div>';
@@ -1849,7 +1820,7 @@ function showTutorial() {
 
 async function init() {
     const g = new GameGrid();
-    setGridAndCamera(g);
+    Object.assign(sim, { grid: g, camera: (g).camera });
 
     function resize() {
         canvas.width = window.innerWidth;
@@ -1860,10 +1831,10 @@ async function init() {
     resize();
 
     const loader = new AssetLoader();
-    window.assets = await loader.loadAll();
+    sim.assets = await loader.loadAll();
     _buildGrassCache();
 
-    setIncidentManager(new IncidentManager());
+    sim.incidentManager = new IncidentManager();
 
     // Initialize snow particles once (always maintained, only drawn in Winter)
     const snow = [];
@@ -1877,21 +1848,21 @@ async function init() {
             opacity: 0.4 + Math.random() * 0.5,
         });
     }
-    setSnowParticles(snow);
+    sim.snowParticles = snow;
 
     // Spawn 2 starter citizens for forgiving early game
     for (let i = 0; i < 2; i++) {
-        const spawnX = (grid.width / 2) * TILE_SIZE + (Math.random() - 0.5) * 64;
-        const spawnY = (grid.height / 2) * TILE_SIZE + (Math.random() - 0.5) * 64;
+        const spawnX = (sim.grid.width / 2) * TILE_SIZE + (Math.random() - 0.5) * 64;
+        const spawnY = (sim.grid.height / 2) * TILE_SIZE + (Math.random() - 0.5) * 64;
         citizens.push(new Citizen(spawnX, spawnY));
         gameState.population++;
     }
 
     // Center camera on the world
-    camera.x = Math.max(0, (grid.width  * TILE_SIZE) / 2 - canvas.width  / 2);
-    camera.y = Math.max(0, (grid.height * TILE_SIZE) / 2 - canvas.height / 2);
+    sim.camera.x = Math.max(0, (sim.grid.width  * TILE_SIZE) / 2 - canvas.width  / 2);
+    sim.camera.y = Math.max(0, (sim.grid.height * TILE_SIZE) / 2 - canvas.height / 2);
 
-    setCurrentTerritoryRadius(calcTerritoryRadius());
+    sim.currentTerritoryRadius = calcTerritoryRadius();
 
     rebuildStructureLists();
     _buildStaticCache();
@@ -1933,17 +1904,17 @@ Object.assign(window, {
     }, { total: 0, walking: 0, visuallyMoving: 0, states: {}, jobs: {} }),
     getSimulationDebug: () => ({
         started: gameState.started,
-        gameIsPaused,
-        userPaused,
-        simRunning: gameState.started && !gameIsPaused && !userPaused,
-        timeScale,
+        gameIsPaused: sim.gameIsPaused,
+        userPaused: sim.userPaused,
+        simRunning: gameState.started && !sim.gameIsPaused && !sim.userPaused,
+        timeScale: sim.timeScale,
         housing: gameState.housing,
         population: gameState.population,
         citizens: citizens.length,
         food: gameState.food,
-        farms: activeFarms.length,
-        houses: activeHouses.length,
-        spawnTimer,
+        farms: sim.activeFarms.length,
+        houses: sim.activeHouses.length,
+        spawnTimer: sim.spawnTimer,
         passiveFarmTimer,
         spawnInterval: getSpawnInterval(),
     })

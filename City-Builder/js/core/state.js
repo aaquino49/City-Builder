@@ -331,8 +331,6 @@ export const activeProjectiles = [];
 export const raiders = [];
 // Raider camps: pillage bases that appear after mid-game waves. While one
 // stands, raids grow stronger; destroying it (ATTACK mode) weakens/delays them.
-export let raiderCamps = [];
-export function setRaiderCamps(arr) { raiderCamps = arr; window.raiderCamps = arr; }
 
 // Territory radius counts every population-derived unit so that training an
 // archer/knight (which consumes a citizen) never shrinks the border.
@@ -361,8 +359,8 @@ export function applyDifficultyConfig(difficultyKey, { syncRaidStrength = false,
     BUILDINGS.monument.ironCost = monumentCost.iron;
     window.currentDifficultyPreset = preset;
     if (syncRaidStrength) {
-        const nextWave = Math.max(1, Math.min((raidCount || 0) + 1, preset.raidStrengths.length));
-        setRaidStrength(getRaidStrengthForWave(nextWave, preset.key));
+        const nextWave = Math.max(1, Math.min((sim.raidCount || 0) + 1, preset.raidStrengths.length));
+        sim.raidStrength = getRaidStrengthForWave(nextWave, preset.key);
     }
     if (refresh && window.refreshUI) window.refreshUI();
     return preset;
@@ -371,204 +369,107 @@ export const projectiles = [];
 export const particles = [];
 export const _activeRaiders = [];
 
-export let activeTowers = [];
-export let activeBallistaTowers = [];
-export let activeGates = [];
-export let activeFarms = [];
-export let activeMonuments = [];
-export let activeWalls = [];
-export let activePillageable = [];
-export let activeHouses = [];
-export let activeGranaries = [];
-export let activeTaverns = [];
-export let activeRubble = [];
-export let activeBarracks = [];
-export let activeArcheryRanges = [];
-
 export const _PILLAGEABLE = new Set(['farm','lumberyard','quarry','mine','house','barracks','archery_range','academy','monument']);
-export let buildingCounts = {};
-export let jobfulStructures = [];
-export let underConstruction = [];
-
-export let _shakeX = 0, _shakeY = 0, _shakeIntensity = 0;
-export let incidentManager = null;
-export let droughtActive = false;
-export let strikeActive = false;
-export let merchantNPC = null;
-export let statsOverlayVisible = false;
-export let _statsUpdateTimer = 0;
-export let _bannerTimeout = null;
-
-export let spawnTimer = 0, taxTimer = 0, emigrationTimer = 0, autoSaveTimer = 0, jobScanTimer = 0;
-export let dayTimer = 0;
-export let _dayPhase = 'day';
-export let _overlayAlpha = 0;
-export let _raidQueued = false;
-export let _griefPenalty = 0;
-export let _happinessFactors = [];
-export let _combatMode = 'defend';
-export let _diplomacyTimers = [];
-export let _allianceTimer = 0;
-export let _soldierCostMult = 1.0;
-export let _soldierCostTimer = 0;
-
-export let _tier2Upgrades = {};
-export let _buildingPanelOpen = false;
-export let _buildingPanelTX = 0;
-export let _buildingPanelTY = 0;
-export let _lastSeason = 'Spring';
-export let _snowParticles = [];
-export let userPaused = false;
-export let timeScale = 1;
 export const JOB_SCAN_INTERVAL = 3.0;
-export let currentTerritoryRadius = 3;
-export let expansionBannerTimer = null;
-
-export let raidTimer = RAID_DURATION;
-export let raidStrength = 10;
-export let raidCount = 0;
-export let raidActive = false;
-export let _scoutPhase = false;
-export let _scoutTimer = 0;
-export let raidActiveTimer = 0;
-export let raidBuildingsDestroyed = 0;
-export let raidCitizensKilled = 0;
-export let gameIsPaused = false;
-export let raidWarningPlayed = false;
 
 export const towerFireTimers = {};
-export let raidWarningSpawnCount = 0;
 export const keys = {};
 export const _BUILD_SHORTCUT_TOOLS = ['house','tower','wall','barracks','farm','lumberyard','quarry','mine','gate'];
-export let isDragging = false, dragStartX = 0, dragStartY = 0, lastMouseX = 0, lastMouseY = 0;
-export let mouseScreenX = canvas.width / 2, mouseScreenY = canvas.height / 2;
-export let grid = null;
-export let camera = null;
-export let assets = null;
 
-// Bind mutable variables to window so standard script referencing is compatible
-const _bindGlobals = () => {
-    Object.assign(window, {
-        canvas, ctx, statsEl, gameState, citizens, soldiers, archers, knights, activeProjectiles,
-        raiders, projectiles, particles, _activeRaiders, _PILLAGEABLE, towerFireTimers, keys,
-        _BUILD_SHORTCUT_TOOLS, assets,
-        grid, camera,
-        _shakeX, _shakeY, _shakeIntensity, incidentManager, droughtActive, strikeActive,
-        merchantNPC, statsOverlayVisible, _statsUpdateTimer, _bannerTimeout,
-        spawnTimer, taxTimer, emigrationTimer, autoSaveTimer, jobScanTimer,
-        dayTimer, _dayPhase, _overlayAlpha, _raidQueued, _griefPenalty,
-        _happinessFactors, _combatMode, _diplomacyTimers, _allianceTimer,
-        _soldierCostMult, _soldierCostTimer, _tier2Upgrades, _buildingPanelOpen,
-        _buildingPanelTX, _buildingPanelTY, _lastSeason, _snowParticles,
-        userPaused, timeScale, currentTerritoryRadius, expansionBannerTimer,
-        raidTimer, raidStrength, raidCount, raidActive, _scoutPhase, _scoutTimer,
-        raidActiveTimer, raidBuildingsDestroyed, raidCitizensKilled, gameIsPaused,
-        raidWarningPlayed, raidWarningSpawnCount, isDragging, dragStartX, dragStartY,
-        lastMouseX, lastMouseY, mouseScreenX, mouseScreenY,
-        activeTowers, activeBallistaTowers, activeGates, activeFarms, activeMonuments,
-        activeWalls, activePillageable, activeHouses, activeGranaries, activeTaverns,
-        activeRubble, activeBarracks, activeArcheryRanges,
-        buildingCounts, jobfulStructures, underConstruction
-    });
+// Canonical storage for reassignable simulation and session state. Consumers
+// must read and write these properties directly so there is only one copy.
+export const sim = {
+    raiderCamps: [],
+    activeTowers: [],
+    activeBallistaTowers: [],
+    activeGates: [],
+    activeFarms: [],
+    activeMonuments: [],
+    activeWalls: [],
+    activePillageable: [],
+    activeHouses: [],
+    activeGranaries: [],
+    activeTaverns: [],
+    activeRubble: [],
+    activeBarracks: [],
+    activeArcheryRanges: [],
+    buildingCounts: {},
+    jobfulStructures: [],
+    underConstruction: [],
+    shakeX: 0,
+    shakeY: 0,
+    shakeIntensity: 0,
+    incidentManager: null,
+    droughtActive: false,
+    strikeActive: false,
+    merchantNPC: null,
+    statsOverlayVisible: false,
+    statsUpdateTimer: 0,
+    bannerTimeout: null,
+    spawnTimer: 0,
+    taxTimer: 0,
+    emigrationTimer: 0,
+    autoSaveTimer: 0,
+    jobScanTimer: 0,
+    dayTimer: 0,
+    dayPhase: 'day',
+    overlayAlpha: 0,
+    raidQueued: false,
+    griefPenalty: 0,
+    happinessFactors: [],
+    combatMode: 'defend',
+    diplomacyTimers: [],
+    allianceTimer: 0,
+    soldierCostMult: 1.0,
+    soldierCostTimer: 0,
+    tier2Upgrades: {},
+    buildingPanelOpen: false,
+    buildingPanelTX: 0,
+    buildingPanelTY: 0,
+    lastSeason: 'Spring',
+    snowParticles: [],
+    userPaused: false,
+    timeScale: 1,
+    currentTerritoryRadius: 3,
+    expansionBannerTimer: null,
+    raidTimer: RAID_DURATION,
+    raidStrength: 10,
+    raidCount: 0,
+    raidActive: false,
+    scoutPhase: false,
+    scoutTimer: 0,
+    raidActiveTimer: 0,
+    raidBuildingsDestroyed: 0,
+    raidCitizensKilled: 0,
+    gameIsPaused: false,
+    raidWarningPlayed: false,
+    raidWarningSpawnCount: 0,
+    isDragging: false,
+    dragStartX: 0,
+    dragStartY: 0,
+    lastMouseX: 0,
+    lastMouseY: 0,
+    mouseScreenX: canvas.width / 2,
+    mouseScreenY: canvas.height / 2,
+    grid: null,
+    camera: null,
+    assets: null,
+    raidPathBudget: 15,
 };
-_bindGlobals();
 
-// ===================== SYNCED WINDOW ACCESSORS =====================
-// Every mutable module-scope binding above is re-exposed on window as an
-// accessor pair backed by the SAME module binding. A bare `window.raidTimer = 0`
-// (or `raidTimer = 0` from any module — it resolves to the window property) now
-// updates the storage that state.js readers, saveGame(), and the exported
-// setters all use. This eliminates the "bare assignment only updated the window
-// copy, so the save went stale" desync bug class documented in past fixes.
-function _sync(name, get, set) {
-    Object.defineProperty(window, name, { get, set, configurable: true });
-}
-_sync('_shakeX', () => _shakeX, v => { _shakeX = v; });
-_sync('_shakeY', () => _shakeY, v => { _shakeY = v; });
-_sync('_shakeIntensity', () => _shakeIntensity, v => { _shakeIntensity = v; });
-_sync('incidentManager', () => incidentManager, v => { incidentManager = v; });
-_sync('droughtActive', () => droughtActive, v => { droughtActive = v; });
-_sync('strikeActive', () => strikeActive, v => { strikeActive = v; });
-_sync('merchantNPC', () => merchantNPC, v => { merchantNPC = v; });
-_sync('statsOverlayVisible', () => statsOverlayVisible, v => { statsOverlayVisible = v; });
-_sync('_statsUpdateTimer', () => _statsUpdateTimer, v => { _statsUpdateTimer = v; });
-_sync('_bannerTimeout', () => _bannerTimeout, v => { _bannerTimeout = v; });
-_sync('spawnTimer', () => spawnTimer, v => { spawnTimer = v; });
-_sync('taxTimer', () => taxTimer, v => { taxTimer = v; });
-_sync('emigrationTimer', () => emigrationTimer, v => { emigrationTimer = v; });
-_sync('autoSaveTimer', () => autoSaveTimer, v => { autoSaveTimer = v; });
-_sync('jobScanTimer', () => jobScanTimer, v => { jobScanTimer = v; });
-_sync('dayTimer', () => dayTimer, v => { dayTimer = v; });
-_sync('_dayPhase', () => _dayPhase, v => { _dayPhase = v; });
-_sync('_overlayAlpha', () => _overlayAlpha, v => { _overlayAlpha = v; });
-_sync('_raidQueued', () => _raidQueued, v => { _raidQueued = v; });
-_sync('_griefPenalty', () => _griefPenalty, v => { _griefPenalty = v; });
-_sync('_happinessFactors', () => _happinessFactors, v => { _happinessFactors = v; });
-_sync('_combatMode', () => _combatMode, v => { _combatMode = v; });
-_sync('_diplomacyTimers', () => _diplomacyTimers, v => { _diplomacyTimers = v; });
-_sync('_allianceTimer', () => _allianceTimer, v => { _allianceTimer = v; });
-_sync('_soldierCostMult', () => _soldierCostMult, v => { _soldierCostMult = v; });
-_sync('_soldierCostTimer', () => _soldierCostTimer, v => { _soldierCostTimer = v; });
-_sync('_tier2Upgrades', () => _tier2Upgrades, v => { _tier2Upgrades = v; });
-_sync('_buildingPanelOpen', () => _buildingPanelOpen, v => { _buildingPanelOpen = v; });
-_sync('_buildingPanelTX', () => _buildingPanelTX, v => { _buildingPanelTX = v; });
-_sync('_buildingPanelTY', () => _buildingPanelTY, v => { _buildingPanelTY = v; });
-_sync('_lastSeason', () => _lastSeason, v => { _lastSeason = v; });
-_sync('_snowParticles', () => _snowParticles, v => { _snowParticles = v; });
-_sync('userPaused', () => userPaused, v => { userPaused = v; });
-_sync('timeScale', () => timeScale, v => { timeScale = v; });
-_sync('currentTerritoryRadius', () => currentTerritoryRadius, v => { currentTerritoryRadius = v; });
-_sync('expansionBannerTimer', () => expansionBannerTimer, v => { expansionBannerTimer = v; });
-_sync('raidTimer', () => raidTimer, v => { raidTimer = v; });
-_sync('raidStrength', () => raidStrength, v => { raidStrength = v; });
-_sync('raidCount', () => raidCount, v => { raidCount = v; });
-_sync('raidActive', () => raidActive, v => { raidActive = v; });
-_sync('_scoutPhase', () => _scoutPhase, v => { _scoutPhase = v; });
-_sync('_scoutTimer', () => _scoutTimer, v => { _scoutTimer = v; });
-_sync('raidActiveTimer', () => raidActiveTimer, v => { raidActiveTimer = v; });
-_sync('raidBuildingsDestroyed', () => raidBuildingsDestroyed, v => { raidBuildingsDestroyed = v; });
-_sync('raidCitizensKilled', () => raidCitizensKilled, v => { raidCitizensKilled = v; });
-_sync('gameIsPaused', () => gameIsPaused, v => { gameIsPaused = v; });
-_sync('raidWarningPlayed', () => raidWarningPlayed, v => { raidWarningPlayed = v; });
-_sync('raidWarningSpawnCount', () => raidWarningSpawnCount, v => { raidWarningSpawnCount = v; });
-_sync('isDragging', () => isDragging, v => { isDragging = v; });
-_sync('dragStartX', () => dragStartX, v => { dragStartX = v; });
-_sync('dragStartY', () => dragStartY, v => { dragStartY = v; });
-_sync('lastMouseX', () => lastMouseX, v => { lastMouseX = v; });
-_sync('lastMouseY', () => lastMouseY, v => { lastMouseY = v; });
-_sync('mouseScreenX', () => mouseScreenX, v => { mouseScreenX = v; });
-_sync('mouseScreenY', () => mouseScreenY, v => { mouseScreenY = v; });
-_sync('grid', () => grid, v => { grid = v; });
-_sync('camera', () => camera, v => { camera = v; });
-_sync('assets', () => assets, v => { assets = v; });
-_sync('raiderCamps', () => raiderCamps, v => { raiderCamps = v; });
-_sync('activeTowers', () => activeTowers, v => { activeTowers = v; });
-_sync('activeBallistaTowers', () => activeBallistaTowers, v => { activeBallistaTowers = v; });
-_sync('activeGates', () => activeGates, v => { activeGates = v; });
-_sync('activeFarms', () => activeFarms, v => { activeFarms = v; });
-_sync('activeMonuments', () => activeMonuments, v => { activeMonuments = v; });
-_sync('activeWalls', () => activeWalls, v => { activeWalls = v; });
-_sync('activePillageable', () => activePillageable, v => { activePillageable = v; });
-_sync('activeHouses', () => activeHouses, v => { activeHouses = v; });
-_sync('activeGranaries', () => activeGranaries, v => { activeGranaries = v; });
-_sync('activeTaverns', () => activeTaverns, v => { activeTaverns = v; });
-_sync('activeRubble', () => activeRubble, v => { activeRubble = v; });
-_sync('activeBarracks', () => activeBarracks, v => { activeBarracks = v; });
-_sync('activeArcheryRanges', () => activeArcheryRanges, v => { activeArcheryRanges = v; });
-_sync('buildingCounts', () => buildingCounts, v => { buildingCounts = v; });
-_sync('jobfulStructures', () => jobfulStructures, v => { jobfulStructures = v; });
-_sync('underConstruction', () => underConstruction, v => { underConstruction = v; });
+window.sim = sim;
 
-export function setGridAndCamera(g) {
-    grid = g;
-    camera = g.camera;
-    window.grid = g;
-    window.camera = g.camera;
-}
+// Stable-identity collections remain available to the legacy global API. All
+// reassignable state is intentionally exposed only through window.sim.
+Object.assign(window, {
+    canvas, ctx, statsEl, gameState, citizens, soldiers, archers, knights,
+    activeProjectiles, raiders, projectiles, particles, _activeRaiders,
+    _PILLAGEABLE, towerFireTimers, keys, _BUILD_SHORTCUT_TOOLS,
+});
 
 export function getStructureAt(tx, ty) {
-    if (!grid || !grid.inBounds(tx, ty)) return null;
-    return grid.structures[ty]?.[tx] ?? null;
+    if (!sim.grid || !sim.grid.inBounds(tx, ty)) return null;
+    return sim.grid.structures[ty]?.[tx] ?? null;
 }
 
 export function getRootStructureAt(tx, ty) {
@@ -579,99 +480,7 @@ export function getRootStructureAt(tx, ty) {
     return { structure: parent, tx: s.parentX, ty: s.parentY };
 }
 
-// Global update getters/setters for primitives
-export function setShake(sx, sy, si) { _shakeX = sx; _shakeY = sy; _shakeIntensity = si; window._shakeX = sx; window._shakeY = sy; window._shakeIntensity = si; }
-export function setIncidentManager(im) { incidentManager = im; window.incidentManager = im; }
-export function setDroughtActive(val) { droughtActive = val; window.droughtActive = val; }
-export function setStrikeActive(val) { strikeActive = val; window.strikeActive = val; }
-export function setMerchantNPC(npc) { merchantNPC = npc; window.merchantNPC = npc; }
-export function setStatsOverlayVisible(val) { statsOverlayVisible = val; window.statsOverlayVisible = val; }
-export function setStatsUpdateTimer(val) { _statsUpdateTimer = val; window._statsUpdateTimer = val; }
-export function setBannerTimeout(val) { _bannerTimeout = val; window._bannerTimeout = val; }
-export function setSpawnTimer(val) { spawnTimer = val; window.spawnTimer = val; }
-export function setTaxTimer(val) { taxTimer = val; window.taxTimer = val; }
-export function setEmigrationTimer(val) { emigrationTimer = val; window.emigrationTimer = val; }
-export function setAutoSaveTimer(val) { autoSaveTimer = val; window.autoSaveTimer = val; }
-export function setJobScanTimer(val) { jobScanTimer = val; window.jobScanTimer = val; }
-export function setDayTimer(val) { dayTimer = val; window.dayTimer = val; }
-export function setDayPhase(val) { _dayPhase = val; window._dayPhase = val; }
-export function setOverlayAlpha(val) { _overlayAlpha = val; window._overlayAlpha = val; }
-export function setRaidQueued(val) { _raidQueued = val; window._raidQueued = val; }
-export function setGriefPenalty(val) { _griefPenalty = val; window._griefPenalty = val; }
-export function setHappinessFactors(arr) { _happinessFactors = arr; window._happinessFactors = arr; }
-export function setCombatMode(val) { _combatMode = val; window._combatMode = val; }
-export function setDiplomacyTimers(arr) { _diplomacyTimers = arr; window._diplomacyTimers = arr; }
-export function setAllianceTimer(val) { _allianceTimer = val; window._allianceTimer = val; }
-export function setSoldierCostMult(val) { _soldierCostMult = val; window._soldierCostMult = val; }
-export function setSoldierCostTimer(val) { _soldierCostTimer = val; window._soldierCostTimer = val; }
-export function setTier2Upgrades(obj) { _tier2Upgrades = obj; window._tier2Upgrades = obj; }
-export function setBuildingPanelOpen(val) { _buildingPanelOpen = val; window._buildingPanelOpen = val; }
-export function setBuildingPanelTX(val) { _buildingPanelTX = val; window._buildingPanelTX = val; }
-export function setBuildingPanelTY(val) { _buildingPanelTY = val; window._buildingPanelTY = val; }
-export function setLastSeason(val) { _lastSeason = val; window._lastSeason = val; }
-export function setSnowParticles(arr) { _snowParticles = arr; window._snowParticles = arr; }
-export function setUserPaused(val) { userPaused = val; window.userPaused = val; }
-export function setTimeScale(val) { timeScale = val; window.timeScale = val; }
-export function setCurrentTerritoryRadius(val) { currentTerritoryRadius = val; window.currentTerritoryRadius = val; }
-export function setExpansionBannerTimer(val) { expansionBannerTimer = val; window.expansionBannerTimer = val; }
-
-export function setRaidTimer(val) { raidTimer = val; window.raidTimer = val; }
-export function setRaidStrength(val) { raidStrength = val; window.raidStrength = val; }
-export function setRaidCount(val) { raidCount = val; window.raidCount = val; }
-export function setRaidActive(val) { raidActive = val; window.raidActive = val; }
-export function setScoutPhase(val) { _scoutPhase = val; window._scoutPhase = val; }
-export function setScoutTimer(val) { _scoutTimer = val; window._scoutTimer = val; }
-export function setRaidActiveTimer(val) { raidActiveTimer = val; window.raidActiveTimer = val; }
-export function setRaidBuildingsDestroyed(val) { raidBuildingsDestroyed = val; window.raidBuildingsDestroyed = val; }
-export function setRaidCitizensKilled(val) { raidCitizensKilled = val; window.raidCitizensKilled = val; }
-export function setGameIsPaused(val) { gameIsPaused = val; window.gameIsPaused = val; }
-export function setRaidWarningPlayed(val) { raidWarningPlayed = val; window.raidWarningPlayed = val; }
-export function setRaidWarningSpawnCount(val) { raidWarningSpawnCount = val; window.raidWarningSpawnCount = val; }
-export function setIsDragging(val) { isDragging = val; window.isDragging = val; }
-export function setDragStartX(val) { dragStartX = val; window.dragStartX = val; }
-export function setDragStartY(val) { dragStartY = val; window.dragStartY = val; }
-export function setLastMouseX(val) { lastMouseX = val; window.lastMouseX = val; }
-export function setLastMouseY(val) { lastMouseY = val; window.lastMouseY = val; }
-export function setMouseScreenX(val) { mouseScreenX = val; window.mouseScreenX = val; }
-export function setMouseScreenY(val) { mouseScreenY = val; window.mouseScreenY = val; }
-
-// Direct binds of collections that change reference
-export function setBuildingLists(lists) {
-    activeTowers = lists.activeTowers; window.activeTowers = lists.activeTowers;
-    activeBallistaTowers = lists.activeBallistaTowers; window.activeBallistaTowers = lists.activeBallistaTowers;
-    activeGates = lists.activeGates; window.activeGates = lists.activeGates;
-    activeFarms = lists.activeFarms; window.activeFarms = lists.activeFarms;
-    activeMonuments = lists.activeMonuments; window.activeMonuments = lists.activeMonuments;
-    activeWalls = lists.activeWalls; window.activeWalls = lists.activeWalls;
-    activePillageable = lists.activePillageable; window.activePillageable = lists.activePillageable;
-    activeHouses = lists.activeHouses; window.activeHouses = lists.activeHouses;
-    activeGranaries = lists.activeGranaries; window.activeGranaries = lists.activeGranaries;
-    activeTaverns = lists.activeTaverns; window.activeTaverns = lists.activeTaverns;
-    activeRubble = lists.activeRubble; window.activeRubble = lists.activeRubble;
-    activeBarracks = lists.activeBarracks; window.activeBarracks = lists.activeBarracks;
-    activeArcheryRanges = lists.activeArcheryRanges; window.activeArcheryRanges = lists.activeArcheryRanges;
-    buildingCounts = lists.buildingCounts; window.buildingCounts = lists.buildingCounts;
-    jobfulStructures = lists.jobfulStructures; window.jobfulStructures = lists.jobfulStructures;
-    underConstruction = lists.underConstruction; window.underConstruction = lists.underConstruction;
-}
-
-// Expose setters to window
-Object.assign(window, {
-    setGridAndCamera, getStructureAt, getRootStructureAt,
-    setShake, setIncidentManager, setDroughtActive, setStrikeActive,
-    setMerchantNPC, setStatsOverlayVisible, setStatsUpdateTimer, setBannerTimeout,
-    setSpawnTimer, setTaxTimer, setEmigrationTimer, setAutoSaveTimer, setJobScanTimer,
-    setDayTimer, setDayPhase, setOverlayAlpha, setRaidQueued, setGriefPenalty,
-    setHappinessFactors, setCombatMode, setDiplomacyTimers, setAllianceTimer,
-    setSoldierCostMult, setSoldierCostTimer, setTier2Upgrades, setBuildingPanelOpen,
-    setBuildingPanelTX, setBuildingPanelTY, setLastSeason, setSnowParticles,
-    setUserPaused, setTimeScale, setCurrentTerritoryRadius, setExpansionBannerTimer,
-    setRaidTimer, setRaidStrength, setRaidCount, setRaidActive, setScoutPhase, setScoutTimer,
-    setRaidActiveTimer, setRaidBuildingsDestroyed, setRaidCitizensKilled, setGameIsPaused,
-    setRaidWarningPlayed, setRaidWarningSpawnCount, setIsDragging, setDragStartX,
-    setDragStartY, setLastMouseX, setLastMouseY, setMouseScreenX, setMouseScreenY,
-    setBuildingLists, markUIDirty, flushUI, setRaiderCamps
-});
+Object.assign(window, { getStructureAt, getRootStructureAt, markUIDirty, flushUI });
 
 // ===================== PERSISTENCE / SAVING =====================
 export const SAVE_VERSION = 7;
@@ -764,38 +573,38 @@ export function saveGame(slotKey = SAVE_KEY) {
         population: gameState.population, food: gameState.food, happiness: gameState.happiness,
         difficulty: gameState.difficulty,
         wood: gameState.wood, stone: gameState.stone, iron: gameState.iron,
-        raidTimer, raidStrength, raidCount, _scoutTimer, _scoutPhase, _raidQueued, _dayPhase, _griefPenalty, _combatMode,
-        raidActive, raidActiveTimer, raidBuildingsDestroyed, raidCitizensKilled,
-        _allianceTimer, _soldierCostMult, _soldierCostTimer,
-        diplomacyTimers: _diplomacyTimers.map(t => ({ remainingSec: t.remainingSec, actionKey: t.actionKey })),
-        dayTimer, day: gameState.day, season: gameState.season,
-        camera: { x: camera.x, y: camera.y, zoom: camera.zoom },
+        raidTimer: sim.raidTimer, raidStrength: sim.raidStrength, raidCount: sim.raidCount, _scoutTimer: sim.scoutTimer, _scoutPhase: sim.scoutPhase, _raidQueued: sim.raidQueued, _dayPhase: sim.dayPhase, _griefPenalty: sim.griefPenalty, _combatMode: sim.combatMode,
+        raidActive: sim.raidActive, raidActiveTimer: sim.raidActiveTimer, raidBuildingsDestroyed: sim.raidBuildingsDestroyed, raidCitizensKilled: sim.raidCitizensKilled,
+        _allianceTimer: sim.allianceTimer, _soldierCostMult: sim.soldierCostMult, _soldierCostTimer: sim.soldierCostTimer,
+        diplomacyTimers: sim.diplomacyTimers.map(t => ({ remainingSec: t.remainingSec, actionKey: t.actionKey })),
+        dayTimer: sim.dayTimer, day: gameState.day, season: gameState.season,
+        camera: { x: sim.camera.x, y: sim.camera.y, zoom: sim.camera.zoom },
         structures: [], roads: [],
-        raiderCamps: raiderCamps.map(c => ({ x: c.x, y: c.y, hp: c.hp, maxHp: c.maxHp })),
+        raiderCamps: sim.raiderCamps.map(c => ({ x: c.x, y: c.y, hp: c.hp, maxHp: c.maxHp })),
         diplomacyFlags: Object.assign({}, gameState.diplomacyFlags || {}),
         soldiers: soldiers.map(s => ({ x: s.x, y: s.y, hp: s.hp, maxHp: s.maxHp, isCaptain: s.isCaptain || undefined })),
         archers:  archers.map(a => ({ x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp })),
         knights:  knights.map(k => ({ x: k.x, y: k.y, hp: k.hp, maxHp: k.maxHp })),
         raiders:  raiders.map(r => ({ x: r.x, y: r.y, hp: r.hp, maxHp: r.maxHp, type: r.type, state: r.state, objective: r.objective, destTX: r.destTX, destTY: r.destTY })),
-        incidentState: incidentManager ? incidentManager.serialize() : null,
-        droughtActive, strikeActive,
-        merchantNPC: merchantNPC ? {
-            x: merchantNPC.x, y: merchantNPC.y, startX: merchantNPC.startX, startY: merchantNPC.startY,
-            speed: merchantNPC.speed, state: merchantNPC.state, _tradeOpened: merchantNPC._tradeOpened
+        incidentState: sim.incidentManager ? sim.incidentManager.serialize() : null,
+        droughtActive: sim.droughtActive, strikeActive: sim.strikeActive,
+        merchantNPC: sim.merchantNPC ? {
+            x: sim.merchantNPC.x, y: sim.merchantNPC.y, startX: sim.merchantNPC.startX, startY: sim.merchantNPC.startY,
+            speed: sim.merchantNPC.speed, state: sim.merchantNPC.state, _tradeOpened: sim.merchantNPC._tradeOpened
         } : null,
         upgrades: gameState.upgrades,
         activeResearch: gameState.activeResearch,
         raidersDefeated: gameState.raidersDefeated,
         housesBuilt: gameState.housesBuilt || 0,
         farmsBuilt: gameState.farmsBuilt || 0,
-        lastSeason: _lastSeason,
-        tier2Upgrades: Object.assign({}, _tier2Upgrades),
+        lastSeason: sim.lastSeason,
+        tier2Upgrades: Object.assign({}, sim.tier2Upgrades),
         // Timers to prevent save-scumming
-        spawnTimer, taxTimer, emigrationTimer, autoSaveTimer, jobScanTimer
+        spawnTimer: sim.spawnTimer, taxTimer: sim.taxTimer, emigrationTimer: sim.emigrationTimer, autoSaveTimer: sim.autoSaveTimer, jobScanTimer: sim.jobScanTimer
     };
-    for (let ty = 0; ty < grid.height; ty++) {
-        for (let tx = 0; tx < grid.width; tx++) {
-            const s = grid.structures[ty][tx];
+    for (let ty = 0; ty < sim.grid.height; ty++) {
+        for (let tx = 0; tx < sim.grid.width; tx++) {
+            const s = sim.grid.structures[ty][tx];
             if (s) {
                 const entry = { tx, ty, key: s.def.key };
                 if (s.progress !== undefined) entry.progress = s.progress;
@@ -810,7 +619,7 @@ export function saveGame(slotKey = SAVE_KEY) {
                 }
                 data.structures.push(entry);
             }
-            if (grid.tiles[ty][tx] === 'tile_road') {
+            if (sim.grid.tiles[ty][tx] === 'tile_road') {
                 data.roads.push({ tx, ty });
             }
         }
@@ -856,13 +665,13 @@ export function loadGame(slotKey = SAVE_KEY) {
     gameState.stone      = d.stone      ?? 50;
     gameState.iron       = d.iron       ?? 0;
     
-    setRaidTimer(Math.min(d.raidTimer ?? RAID_DURATION, RAID_DURATION));
-    setRaidStrength(d.raidStrength ?? getRaidStrengthForWave((d.raidCount ?? 0) + 1, gameState.difficulty));
-    setRaidCount(d.raidCount ?? 0);
-    setScoutTimer(d._scoutTimer ?? 0);
-    setScoutPhase(d._scoutPhase ?? false);
-    setRaidQueued(d._raidQueued ?? false);
-    setDayTimer(d.dayTimer ?? 0);
+    sim.raidTimer = Math.min(d.raidTimer ?? RAID_DURATION, RAID_DURATION);
+    sim.raidStrength = d.raidStrength ?? getRaidStrengthForWave((d.raidCount ?? 0) + 1, gameState.difficulty);
+    sim.raidCount = d.raidCount ?? 0;
+    sim.scoutTimer = d._scoutTimer ?? 0;
+    sim.scoutPhase = d._scoutPhase ?? false;
+    sim.raidQueued = d._raidQueued ?? false;
+    sim.dayTimer = d.dayTimer ?? 0;
     
     gameState.day = d.day ?? 1;
     gameState.season = d.season ?? 'Spring';
@@ -875,23 +684,23 @@ export function loadGame(slotKey = SAVE_KEY) {
         }
         return 'day';
     });
-    setDayPhase(d._dayPhase ?? getDayPhaseFn(dayTimer));
-    setGriefPenalty(d._griefPenalty ?? 0);
-    setCombatMode(d._combatMode ?? 'defend');
-    setAllianceTimer(d._allianceTimer ?? 0);
-    setSoldierCostMult(d._soldierCostMult ?? 1.0);
-    setSoldierCostTimer(d._soldierCostTimer ?? 0);
+    sim.dayPhase = d._dayPhase ?? getDayPhaseFn(sim.dayTimer);
+    sim.griefPenalty = d._griefPenalty ?? 0;
+    sim.combatMode = d._combatMode ?? 'defend';
+    sim.allianceTimer = d._allianceTimer ?? 0;
+    sim.soldierCostMult = d._soldierCostMult ?? 1.0;
+    sim.soldierCostTimer = d._soldierCostTimer ?? 0;
 
     // Retrieve Action Map or fallback
     const actionMap = window._DIPLOMACY_ACTION_MAP || {};
-    setDiplomacyTimers((d.diplomacyTimers || []).map(t => {
+    sim.diplomacyTimers = (d.diplomacyTimers || []).map(t => {
         const action = actionMap[t.actionKey];
         if (!action) return null;
         return { remainingSec: t.remainingSec, actionKey: t.actionKey, action };
-    }).filter(Boolean));
+    }).filter(Boolean);
 
     updateCombatModeUI();
-    if (_scoutPhase) showEventBanner('SCOUTS SPOTTED!', 'Raiders approach — close your gates!');
+    if (sim.scoutPhase) showEventBanner('SCOUTS SPOTTED!', 'Raiders approach — close your gates!');
     _updateDayPhaseGlyph();
     updateDaySeason();
     
@@ -899,15 +708,15 @@ export function loadGame(slotKey = SAVE_KEY) {
     gameState.farmsBuilt  = d.farmsBuilt  ?? 0;
     
     if (d.camera) {
-        camera.x = d.camera.x ?? 0;
-        camera.y = d.camera.y ?? 0;
-        camera.zoom = d.camera.zoom ?? 1;
+        sim.camera.x = d.camera.x ?? 0;
+        sim.camera.y = d.camera.y ?? 0;
+        sim.camera.zoom = d.camera.zoom ?? 1;
     }
     
-    grid.tiles = grid._generateTiles();
-    for (let ty = 0; ty < grid.height; ty++) {
-        for (let tx = 0; tx < grid.width; tx++) {
-            grid.structures[ty][tx] = null;
+    sim.grid.tiles = sim.grid._generateTiles();
+    for (let ty = 0; ty < sim.grid.height; ty++) {
+        for (let tx = 0; tx < sim.grid.width; tx++) {
+            sim.grid.structures[ty][tx] = null;
         }
     }
     
@@ -917,7 +726,7 @@ export function loadGame(slotKey = SAVE_KEY) {
         if (!def && key === 'rubble')         def = RUBBLE_DEF;
         if (!def && key === 'stone_deposit')  def = STONE_DEP_DEF;
         if (!def && key === 'iron_vein')      def = IRON_VEIN_DEF;
-        if (def && grid.inBounds(tx, ty)) {
+        if (def && sim.grid.inBounds(tx, ty)) {
             const entry = { def };
             if (progress !== undefined) entry.progress = progress;
             if (hp !== undefined) entry.hp = hp;
@@ -929,11 +738,11 @@ export function loadGame(slotKey = SAVE_KEY) {
                 entry.parentX = parentX;
                 entry.parentY = parentY;
             }
-            grid.structures[ty][tx] = entry;
+            sim.grid.structures[ty][tx] = entry;
         }
     });
     (d.roads || []).forEach(({ tx, ty }) => {
-        if (grid.inBounds(tx, ty)) grid.tiles[ty][tx] = 'tile_road';
+        if (sim.grid.inBounds(tx, ty)) sim.grid.tiles[ty][tx] = 'tile_road';
     });
     
     citizens.length = 0;
@@ -945,8 +754,8 @@ export function loadGame(slotKey = SAVE_KEY) {
     projectiles.length = 0;
     particles.length = 0;
     
-    setDroughtActive(d.droughtActive ?? false);
-    setStrikeActive(d.strikeActive ?? false);
+    sim.droughtActive = d.droughtActive ?? false;
+    sim.strikeActive = d.strikeActive ?? false;
     
     if (d.merchantNPC) {
         const npc = new MerchantNPC();
@@ -957,12 +766,12 @@ export function loadGame(slotKey = SAVE_KEY) {
         npc.speed = d.merchantNPC.speed;
         npc.state = d.merchantNPC.state;
         npc._tradeOpened = d.merchantNPC._tradeOpened;
-        setMerchantNPC(npc);
+        sim.merchantNPC = npc;
     } else {
-        setMerchantNPC(null);
+        sim.merchantNPC = null;
     }
     
-    if (incidentManager && d.incidentState) incidentManager.deserialize(d.incidentState);
+    if (sim.incidentManager && d.incidentState) sim.incidentManager.deserialize(d.incidentState);
     
     gameState.upgrades = Object.assign({
         reinforced_masonry: false,
@@ -979,17 +788,17 @@ export function loadGame(slotKey = SAVE_KEY) {
     gameState.endless = d.endless ?? false;
     gameState.victoryAchieved = d.victoryAchieved ?? false;
     gameState.diplomacyFlags = Object.assign({}, d.diplomacyFlags ?? {});
-    setRaiderCamps((d.raiderCamps || []).map(c => ({ x: c.x, y: c.y, hp: c.hp, maxHp: c.maxHp ?? c.hp })));
-    setTier2Upgrades(d.tier2Upgrades ? Object.assign({}, d.tier2Upgrades) : {});
+    sim.raiderCamps = (d.raiderCamps || []).map(c => ({ x: c.x, y: c.y, hp: c.hp, maxHp: c.maxHp ?? c.hp }));
+    sim.tier2Upgrades = d.tier2Upgrades ? Object.assign({}, d.tier2Upgrades) : {};
     
     // Restore raw sub-second timers
-    setSpawnTimer(d.spawnTimer ?? 0);
-    setTaxTimer(d.taxTimer ?? 0);
-    setEmigrationTimer(d.emigrationTimer ?? 0);
-    setAutoSaveTimer(d.autoSaveTimer ?? 0);
-    setJobScanTimer(d.jobScanTimer ?? 0);
+    sim.spawnTimer = d.spawnTimer ?? 0;
+    sim.taxTimer = d.taxTimer ?? 0;
+    sim.emigrationTimer = d.emigrationTimer ?? 0;
+    sim.autoSaveTimer = d.autoSaveTimer ?? 0;
+    sim.jobScanTimer = d.jobScanTimer ?? 0;
     
-    const cx = (grid.width / 2) * TILE_SIZE, cy = (grid.height / 2) * TILE_SIZE;
+    const cx = (sim.grid.width / 2) * TILE_SIZE, cy = (sim.grid.height / 2) * TILE_SIZE;
     for (let i = 0; i < gameState.population; i++) citizens.push(new Citizen(cx, cy));
     (d.soldiers || []).forEach(({ x, y, hp, maxHp, isCaptain }) => {
         const s = new Soldier(x, y);
@@ -1020,22 +829,22 @@ export function loadGame(slotKey = SAVE_KEY) {
         if (rData.destTX !== undefined) { r.destTX = rData.destTX; r.destTY = rData.destTY; }
         raiders.push(r);
     });
-    setLastSeason(d.lastSeason ?? gameState.season);
-    setGameIsPaused(false);
-    setUserPaused(false);
-    setTimeScale(1);
-    setCurrentTerritoryRadius(calcTerritoryRadius());
+    sim.lastSeason = d.lastSeason ?? gameState.season;
+    sim.gameIsPaused = false;
+    sim.userPaused = false;
+    sim.timeScale = 1;
+    sim.currentTerritoryRadius = calcTerritoryRadius();
     rebuildStructureLists();
     _buildGrassCache();
     _buildStaticCache();
     // Restore active-raid state AFTER raiders/citizens/structure lists exist, so
     // defenders re-engage and citizens re-hide when a mid-raid save is loaded.
-    setRaidActive(d.raidActive ?? raiders.some(r => r.state === 'walking'));
-    setRaidActiveTimer(d.raidActiveTimer ?? 0);
-    setRaidBuildingsDestroyed(d.raidBuildingsDestroyed ?? 0);
-    setRaidCitizensKilled(d.raidCitizensKilled ?? 0);
+    sim.raidActive = d.raidActive ?? raiders.some(r => r.state === 'walking');
+    sim.raidActiveTimer = d.raidActiveTimer ?? 0;
+    sim.raidBuildingsDestroyed = d.raidBuildingsDestroyed ?? 0;
+    sim.raidCitizensKilled = d.raidCitizensKilled ?? 0;
     if (window._setRaidersDefeatedAtWaveStart) window._setRaidersDefeatedAtWaveStart(gameState.raidersDefeated || 0);
-    if (raidActive && window.sendCitizensToHide) window.sendCitizensToHide();
+    if (sim.raidActive && window.sendCitizensToHide) window.sendCitizensToHide();
     refreshUI();
     if (window.updateTimePauseUI) window.updateTimePauseUI();
     updateRaidHUD();

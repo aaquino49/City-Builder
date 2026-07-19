@@ -1,3 +1,7 @@
+import {
+    sim,
+} from './core/state.js';
+
 // Query-gated release-candidate QA harness. Activate with ?qa=1.
 const QA_ENABLED = new URLSearchParams(window.location.search).has('qa');
 
@@ -6,7 +10,7 @@ function waitForGameReady() {
         const tick = () => {
             // __initDone: init() has fully finished (assets, lists, start screen) —
             // starting earlier let init re-show the start screen over a running sim
-            if (window.__initDone && window.grid && window.gameState && window.Citizen && window.Soldier && window.Raider) resolve();
+            if (window.__initDone && sim.grid && window.gameState && window.Citizen && window.Soldier && window.Raider) resolve();
             else setTimeout(tick, 50);
         };
         tick();
@@ -19,15 +23,15 @@ function setQaResult(payload) {
 }
 
 function placeIfFree(tx, ty, def) {
-    if (!window.grid?.inBounds(tx, ty) || !def) return false;
+    if (!sim.grid?.inBounds(tx, ty) || !def) return false;
     const w = def.width || 1;
     const h = def.height || 1;
     for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
-            if (!window.grid.inBounds(tx + x, ty + y) || window.grid.structures[ty + y][tx + x]) return false;
+            if (!sim.grid.inBounds(tx + x, ty + y) || sim.grid.structures[ty + y][tx + x]) return false;
         }
     }
-    window.grid.place(tx, ty, def);
+    sim.grid.place(tx, ty, def);
     return true;
 }
 
@@ -44,20 +48,20 @@ function seedLargeCity() {
     clearRuntimeCollections();
     const { BUILDINGS, TILE_SIZE } = window;
     window.gameState.started = true;
-    window.setGameIsPaused(false);
-    window.setUserPaused(false);
-    window.setTimeScale(1);
+    sim.gameIsPaused = false;
+    sim.userPaused = false;
+    sim.timeScale = 1;
     const start = document.getElementById('start-screen');
     if (start) start.style.display = 'none';
 
-    for (let ty = 0; ty < window.grid.height; ty++) {
-        for (let tx = 0; tx < window.grid.width; tx++) {
-            window.grid.structures[ty][tx] = null;
-            window.grid.tiles[ty][tx] = 'tile_grass';
+    for (let ty = 0; ty < sim.grid.height; ty++) {
+        for (let tx = 0; tx < sim.grid.width; tx++) {
+            sim.grid.structures[ty][tx] = null;
+            sim.grid.tiles[ty][tx] = 'tile_grass';
         }
     }
-    for (let tx = 6; tx < 58; tx++) window.grid.tiles[32][tx] = 'tile_road';
-    for (let ty = 6; ty < 58; ty++) window.grid.tiles[ty][32] = 'tile_road';
+    for (let tx = 6; tx < 58; tx++) sim.grid.tiles[32][tx] = 'tile_road';
+    for (let ty = 6; ty < 58; ty++) sim.grid.tiles[ty][32] = 'tile_road';
 
     for (let i = 0; i < 34; i++) {
         const tx = 18 + (i % 9) * 3;
@@ -95,10 +99,10 @@ function seedLargeCity() {
     window.gameState.housing = 220;
     window.gameState.gold = 5000;
     window.gameState.food = 600;
-    window.setRaidActive(true);
-    window.setRaidCount(7);
-    window.setRaidStrength(118);
-    window.setCurrentTerritoryRadius(30);
+    sim.raidActive = true;
+    sim.raidCount = 7;
+    sim.raidStrength = 118;
+    sim.currentTerritoryRadius = 30;
     window.refreshUI();
     window.updateRaidHUD();
     return {
@@ -107,7 +111,7 @@ function seedLargeCity() {
         archers: window.archers.length,
         knights: window.knights.length,
         raiders: window.raiders.length,
-        structures: window.activeHouses.length + window.activeFarms.length + window.activeWalls.length,
+        structures: sim.activeHouses.length + sim.activeFarms.length + sim.activeWalls.length,
     };
 }
 
@@ -170,17 +174,17 @@ function testRaidSaveLoad() {
     for (let i = 0; i < 12; i++) {
         window.raiders.push(new window.Raider((4 + i) * TILE_SIZE, 4 * TILE_SIZE, 'normal'));
     }
-    window.setRaidActive(true);
-    window.setRaidActiveTimer(42);
-    window.setRaidBuildingsDestroyed(3);
-    window.setRaidCitizensKilled(2);
+    sim.raidActive = true;
+    sim.raidActiveTimer = 42;
+    sim.raidBuildingsDestroyed = 3;
+    sim.raidCitizensKilled = 2;
     window.saveGame();
     const loaded = window.loadGame();
     return {
         loaded,
-        raidActiveRestored: window.raidActive === true,
-        raidActiveTimerRestored: window.raidActiveTimer === 42,
-        talliesRestored: window.raidBuildingsDestroyed === 3 && window.raidCitizensKilled === 2,
+        raidActiveRestored: sim.raidActive === true,
+        raidActiveTimerRestored: sim.raidActiveTimer === 42,
+        talliesRestored: sim.raidBuildingsDestroyed === 3 && sim.raidCitizensKilled === 2,
         raidersRestored: window.raiders.length === 12,
         citizensHiding: window.citizens.length === 0 || window.citizens.some(c => c.job === 'hiding'),
     };
@@ -191,7 +195,7 @@ function testPathfinding() {
     let found = 0;
     let blocked = 0;
     let deferred = 0;
-    window.setRaidPathBudget(1000);
+    sim.raidPathBudget = 1000;
     for (let i = 0; i < 240; i++) {
         const sx = 4 + (i % 16);
         const sy = 4 + ((i * 3) % 16);
@@ -214,7 +218,7 @@ function testRegressionBugs() {
     const { TILE_SIZE, BUILDINGS } = window;
     const results = {};
 
-    const maxR = (window.currentTerritoryRadius + 1) * TILE_SIZE;
+    const maxR = (sim.currentTerritoryRadius + 1) * TILE_SIZE;
     const centerX = 32.5 * TILE_SIZE;
     const centerY = 32.5 * TILE_SIZE;
     const outsideX = centerX + maxR + TILE_SIZE * 8;
@@ -232,8 +236,8 @@ function testRegressionBugs() {
     // across the map.
     {
         window.raiders.length = 0;
-        window.setRaidActive(true);
-        window.setRaidPathBudget(1000);
+        sim.raidActive = true;
+        sim.raidPathBudget = 1000;
         // Seeded-city walls span tx 14–44 at ty 15/49 → rally ≈ (29, 32).
         // (34, 35) is well inside the 10-tile leash; (6, 6) is far outside it.
         const testRaider = new window.Raider(34 * TILE_SIZE, 35 * TILE_SIZE, 'normal');
@@ -243,7 +247,7 @@ function testRegressionBugs() {
         const testKnight = new window.Knight(35 * TILE_SIZE, 36 * TILE_SIZE);
         window.soldiers.push(testSoldier);
         window.knights.push(testKnight);
-        window.setCombatMode('defend');
+        sim.combatMode = 'defend';
         const soldierDistBefore = Math.hypot(testSoldier.x - testRaider.x, testSoldier.y - testRaider.y);
         const knightDistBefore = Math.hypot(testKnight.x - testRaider.x, testKnight.y - testRaider.y);
         for (let i = 0; i < 5; i++) window.update(200);
@@ -261,13 +265,13 @@ function testRegressionBugs() {
             testSoldier._chaseTarget !== farRaider && testKnight._chaseTarget !== farRaider;
         window.soldiers.pop(); window.knights.pop();
         window.raiders.length = 0;
-        window.setRaidActive(false);
+        sim.raidActive = false;
     }
 
     // Difficulty must actually change raid sizes (raidStrength was previously
     // saved/migrated but never read — Settler and Iron Crown played identically).
     {
-        window.setRaiderCamps([]); // camps would inflate the baseline
+        sim.raiderCamps = []; // camps would inflate the baseline
         const settlerSize = window.getScaledWaveSize(5, 40);  // settler wave-5 strength
         const lordSize    = window.getScaledWaveSize(5, 48);  // lord baseline
         const ironSize    = window.getScaledWaveSize(5, 60);  // iron crown
@@ -278,16 +282,16 @@ function testRegressionBugs() {
     // Raider camps: a standing camp strengthens raids, and in ATTACK mode with
     // no raiders on the field, soldiers grind its HP down.
     {
-        window.setRaiderCamps([]);
+        sim.raiderCamps = [];
         const sizeNoCamp = window.getScaledWaveSize(5, 48);
         const campHp = window.COMBAT_BALANCE?.camp?.hp ?? 300;
         const camp = { x: 40 * TILE_SIZE + TILE_SIZE / 2, y: 40 * TILE_SIZE + TILE_SIZE / 2, hp: campHp, maxHp: campHp };
-        window.raiderCamps.push(camp);
+        sim.raiderCamps.push(camp);
         results.campBoostsWaveSize = window.getScaledWaveSize(5, 48) > sizeNoCamp;
 
         window.raiders.length = 0;
-        window.setRaidActive(false);
-        window.setCombatMode('attack');
+        sim.raidActive = false;
+        sim.combatMode = 'attack';
         const assaulter = new window.Soldier(camp.x + TILE_SIZE, camp.y);
         window.soldiers.push(assaulter);
         for (let i = 0; i < 5; i++) window.update(200);
@@ -295,8 +299,8 @@ function testRegressionBugs() {
 
         const ai = window.soldiers.indexOf(assaulter);
         if (ai !== -1) window.soldiers.splice(ai, 1);
-        window.setRaiderCamps([]);
-        window.setCombatMode('defend');
+        sim.raiderCamps = [];
+        sim.combatMode = 'defend';
     }
 
     // Task 1 regression: units spawned exactly on top of each other (the
@@ -304,7 +308,7 @@ function testRegressionBugs() {
     {
         // Clear the test tile of any randomly-generated tree/stone/iron obstacle
         // so the test is deterministic regardless of world-gen RNG.
-        if (window.grid.inBounds(20, 20)) window.grid.structures[20][20] = null;
+        if (sim.grid.inBounds(20, 20)) sim.grid.structures[20][20] = null;
         const stackX = 20 * TILE_SIZE + TILE_SIZE / 2, stackY = 20 * TILE_SIZE + TILE_SIZE / 2;
         const stack = [];
         for (let i = 0; i < 5; i++) {
@@ -315,7 +319,7 @@ function testRegressionBugs() {
         }
         for (let i = 0; i < 20; i++) {
             window.rebuildSeparationGrid();
-            for (const c of stack) c.update(0.016, window.grid); // dtSec (Citizen.update now takes seconds)
+            for (const c of stack) c.update(0.016, sim.grid); // dtSec (Citizen.update now takes seconds)
         }
         let anyOverlap = false;
         for (let i = 0; i < stack.length; i++) {
@@ -333,53 +337,53 @@ function testRegressionBugs() {
     // Raid timing: expiring the timer at night enters a 30s scout warning
     // (not an instant spawn); the wave spawns when the scout timer runs out.
     window.raiders.length = 0;
-    window.setRaidActive(false);
-    window.setScoutPhase(false);
-    window.setRaidQueued(false);
-    window.setRaidCount(1);
-    window.setDayTimer(55); // night
-    window.setRaidTimer(0.01);
+    sim.raidActive = false;
+    sim.scoutPhase = false;
+    sim.raidQueued = false;
+    sim.raidCount = 1;
+    sim.dayTimer = 55; // night
+    sim.raidTimer = 0.01;
     window.update(32);
-    results.raidWarnsBeforeSpawning = window._scoutPhase === true && window.raidActive === false;
+    results.raidWarnsBeforeSpawning = sim.scoutPhase === true && sim.raidActive === false;
 
-    window.setScoutTimer(0.01);
+    sim.scoutTimer = 0.01;
     window.update(32);
-    results.scoutExpiryStartsRaid = window.raidActive === true && window.raiders.length > 0 && window._scoutPhase === false;
+    results.scoutExpiryStartsRaid = sim.raidActive === true && window.raiders.length > 0 && sim.scoutPhase === false;
     results.waveBannerShown = document.getElementById('event-banner-title')?.textContent?.includes('RAID WAVE') || false;
 
     // Expiring the timer during the day queues the raid for nightfall
     window.raiders.length = 0;
-    window.setRaidActive(false);
-    window.setScoutPhase(false);
-    window.setRaidQueued(false);
-    window.setDayTimer(20); // daytime
-    window.setRaidTimer(0.01);
+    sim.raidActive = false;
+    sim.scoutPhase = false;
+    sim.raidQueued = false;
+    sim.dayTimer = 20; // daytime
+    sim.raidTimer = 0.01;
     window.update(32);
-    results.daytimeRaidQueues = window._raidQueued === true && window.raidActive === false;
+    results.daytimeRaidQueues = sim.raidQueued === true && sim.raidActive === false;
 
     // The queued raid triggers the scout warning once night falls
-    window.setDayTimer(55); // night
+    sim.dayTimer = 55; // night
     window.update(32);
-    results.queuedRaidScoutsAtNight = window._scoutPhase === true && window._raidQueued === false && window.raidActive === false;
+    results.queuedRaidScoutsAtNight = sim.scoutPhase === true && sim.raidQueued === false && sim.raidActive === false;
 
     // Reset raid state for the tests below
     window.raiders.length = 0;
-    window.setScoutPhase(false);
-    window.setRaidQueued(false);
-    window.setRaidTimer(180);
+    sim.scoutPhase = false;
+    sim.raidQueued = false;
+    sim.raidTimer = 180;
 
-    window.setRaidActive(false);
+    sim.raidActive = false;
     window.raiders.length = 0;
     const tx = 28, ty = 28;
     placeIfFree(tx, ty, BUILDINGS.monument);
-    const monument = window.grid.structures[ty][tx];
+    const monument = sim.grid.structures[ty][tx];
     if (monument) monument.progress = 0;
     window.rebuildStructureLists();
     for (const c of window.citizens.slice(0, 20)) {
         c.job = 'farmer';
         c.state = 'idle';
-        c._workTX = window.activeFarms[0]?.tx ?? -1;
-        c._workTY = window.activeFarms[0]?.ty ?? -1;
+        c._workTX = sim.activeFarms[0]?.tx ?? -1;
+        c._workTY = sim.activeFarms[0]?.ty ?? -1;
     }
     window.assignCitizenJobs();
     const builder = window.citizens.find(c => c.job === 'builder' && c._workTX === tx && c._workTY === ty);
@@ -388,24 +392,24 @@ function testRegressionBugs() {
         builder.y = ty * TILE_SIZE + TILE_SIZE / 2;
         builder.state = 'idle';
         builder._phase = 'building';
-        builder.update(1.0, window.grid); // dtSec (Citizen.update now takes seconds)
+        builder.update(1.0, sim.grid); // dtSec (Citizen.update now takes seconds)
     }
     results.monumentGetsBuilder = !!builder;
-    results.monumentProgresses = (window.grid.structures[ty]?.[tx]?.progress ?? 0) > 0;
+    results.monumentProgresses = (sim.grid.structures[ty]?.[tx]?.progress ?? 0) > 0;
 
     return results;
 }
 
 function sampleMovement() {
-    window.setCombatMode('attack');
+    sim.combatMode = 'attack';
     window.updateCombatModeUI?.();
-    window.setRaidPathBudget(1000);
+    sim.raidPathBudget = 1000;
     for (const c of window.citizens.slice(0, 30)) {
-        if (typeof c._tryAmbientWalk === 'function') c._tryAmbientWalk(window.grid);
+        if (typeof c._tryAmbientWalk === 'function') c._tryAmbientWalk(sim.grid);
     }
     for (const s of window.soldiers.slice(0, 25)) {
         s._idleTimer = s._idleWait || 0;
-        if (typeof s._pickPatrolTarget === 'function') s._pickPatrolTarget(window.grid);
+        if (typeof s._pickPatrolTarget === 'function') s._pickPatrolTarget(sim.grid);
     }
     for (const r of window.raiders.slice(0, 25)) {
         r._repathTimer = 0;
@@ -434,9 +438,9 @@ function sampleMovement() {
 // that per-state unit checks miss.
 function simulateTimeline(totalSec = 400) {
     window.gameState.started = true;
-    window.setGameIsPaused(false);
-    window.setUserPaused(false);
-    window.setTimeScale(1);
+    sim.gameIsPaused = false;
+    sim.userPaused = false;
+    sim.timeScale = 1;
     const start = document.getElementById('start-screen');
     if (start) start.style.display = 'none';
     const events = [];
@@ -445,7 +449,7 @@ function simulateTimeline(totalSec = 400) {
     for (let step = 0; step < totalSec * 10; step++) {
         window.update(100);
         // Auto-answer any modal that paused the game (raid result, diplomacy, trade)
-        if (window.gameIsPaused) {
+        if (sim.gameIsPaused) {
             if (document.getElementById('raid-modal')?.classList.contains('open')) {
                 document.getElementById('modal-continue')?.click();
             } else if (document.getElementById('diplomacy-modal')?.classList.contains('open')) {
@@ -453,12 +457,12 @@ function simulateTimeline(totalSec = 400) {
             } else if (document.getElementById('trade-modal')?.classList.contains('open')) {
                 document.getElementById('trade-close')?.click();
             } else {
-                window.setGameIsPaused(false); // research/other overlays
+                sim.gameIsPaused = false; // research/other overlays
             }
         }
-        const phase = window.raidActive ? 'raid'
-                    : window._scoutPhase ? 'scout'
-                    : window._raidQueued ? 'queued'
+        const phase = sim.raidActive ? 'raid'
+                    : sim.scoutPhase ? 'scout'
+                    : sim.raidQueued ? 'queued'
                     : 'countdown';
         if (phase !== lastPhase) {
             if (phase === 'raid') raidsSeen++;
@@ -466,9 +470,9 @@ function simulateTimeline(totalSec = 400) {
                 tSec: +(step / 10).toFixed(1),
                 phase,
                 raiders: window.raiders.length,
-                raidTimer: +(window.raidTimer ?? 0).toFixed(1),
-                dayPhase: window._dayPhase,
-                wave: (window.raidCount ?? 0) + 1,
+                raidTimer: +(sim.raidTimer ?? 0).toFixed(1),
+                dayPhase: sim.dayPhase,
+                wave: (sim.raidCount ?? 0) + 1,
             });
             lastPhase = phase;
         }
@@ -540,8 +544,8 @@ if (QA_ENABLED) {
         if (new URLSearchParams(window.location.search).get('qa') === 'shot') {
             try {
                 window.gameState.started = true;
-                window.setGameIsPaused(false);
-                window.setUserPaused(false);
+                sim.gameIsPaused = false;
+                sim.userPaused = false;
                 const start = document.getElementById('start-screen');
                 if (start) start.style.display = 'none';
                 const { TILE_SIZE } = window;
@@ -552,9 +556,9 @@ if (QA_ENABLED) {
                 for (let i = 0; i < 3; i++) window.knights.push(new window.Knight(cx, cy + 40));
                 // Frame the cluster in the open upper-left canvas area, clear of
                 // the docked BUILD panel (right) and bottom HUD bar.
-                window.camera.zoom = 4.0;
-                window.camera.x = cx - 300 / window.camera.zoom;
-                window.camera.y = cy - 300 / window.camera.zoom;
+                sim.camera.zoom = 4.0;
+                sim.camera.x = cx - 300 / sim.camera.zoom;
+                sim.camera.y = cy - 300 / sim.camera.zoom;
                 for (let i = 0; i < 40; i++) window.update(16);
             } catch (err) {
                 console.error('[QA ERROR] ' + err.message + '\n' + err.stack);

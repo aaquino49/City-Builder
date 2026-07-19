@@ -1,17 +1,14 @@
 // Pixel Dominion — Pathfinding Module
-import { GRID_WIDTH, GRID_HEIGHT, grid } from './state.js';
-
-// Raid path budget to limit pathfinding cost per frame
-export let _raidPathBudget = 15;
-export function setRaidPathBudget(val) {
-    _raidPathBudget = val;
-    window._raidPathBudget = val;
-}
+import {
+    GRID_WIDTH,
+    GRID_HEIGHT,
+    sim,
+} from './state.js';
 
 // Walking checks
 export function isRaiderWalkable(tx, ty) {
-    if (!grid || !grid.inBounds(tx, ty)) return false;
-    const s = grid.structures[ty][tx];
+    if (!sim.grid || !sim.grid.inBounds(tx, ty)) return false;
+    const s = sim.grid.structures[ty][tx];
     if (!s) return true;
     const k = s.def.key;
     if (k === 'wall' || k === 'tower' || k === 'ballista_tower') return false;
@@ -21,8 +18,8 @@ export function isRaiderWalkable(tx, ty) {
 }
 
 export function isFriendlyWalkable(tx, ty) {
-    if (!grid || !grid.inBounds(tx, ty)) return false;
-    const s = grid.structures[ty][tx];
+    if (!sim.grid || !sim.grid.inBounds(tx, ty)) return false;
+    const s = sim.grid.structures[ty][tx];
     if (!s) return true;
     const k = s.def.key;
     if (k === 'gate') return !!s.gateOpen;
@@ -73,8 +70,8 @@ function _aHeapPop() {
 }
 
 export function aStarPath(sx, sy, ex, ey, walkableFn = isRaiderWalkable) {
-    if (_raidPathBudget <= 0) return false; // budget exhausted — retry next frame
-    setRaidPathBudget(_raidPathBudget - 1);
+    if (sim.raidPathBudget <= 0) return false; // budget exhausted — retry next frame
+    sim.raidPathBudget = sim.raidPathBudget - 1;
     sx = Math.max(0, Math.min(_A_W - 1, sx | 0));
     sy = Math.max(0, Math.min(_A_H - 1, sy | 0));
     ex = Math.max(0, Math.min(_A_W - 1, ex | 0));
@@ -143,7 +140,6 @@ export function aStarPath(sx, sy, ex, ey, walkableFn = isRaiderWalkable) {
 
 // Bind to window for legacy scripts
 Object.assign(window, {
-    _raidPathBudget, setRaidPathBudget,
     isRaiderWalkable, isFriendlyWalkable,
     aStarPath
 });

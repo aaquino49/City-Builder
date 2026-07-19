@@ -1,6 +1,10 @@
+import {
+    sim,
+} from './state.js';
+
 // Pixel Dominion — Input Manager Module
 // Handles keyboard, mouse, and wheel events.
-// All state reads/writes flow through the window globals defined in state.js.
+// Reassignable state reads/writes flow through the shared sim object.
 
 // ===================== KEYBOARD =====================
 window.addEventListener('keydown', e => {
@@ -12,7 +16,7 @@ window.addEventListener('keydown', e => {
     if (!window.gameState.started) return;
 
     // 1-9: select build tools, 0: demolish
-    if (e.key >= '1' && e.key <= '9' && !window.gameIsPaused) {
+    if (e.key >= '1' && e.key <= '9' && !sim.gameIsPaused) {
         const idx = parseInt(e.key) - 1;
         if (idx < window._BUILD_SHORTCUT_TOOLS.length) {
             window.gameState.selectedTool = window._BUILD_SHORTCUT_TOOLS[idx];
@@ -20,7 +24,7 @@ window.addEventListener('keydown', e => {
         }
         return;
     }
-    if (e.key === '0' && !window.gameIsPaused) {
+    if (e.key === '0' && !sim.gameIsPaused) {
         window.gameState.selectedTool = 'demolish';
         if (window.updateBuildMenu) window.updateBuildMenu();
         return;
@@ -28,12 +32,12 @@ window.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
         window.gameState.selectedTool = null;
         if (window.updateBuildMenu) window.updateBuildMenu();
-        if (window.statsOverlayVisible && window.toggleStatsOverlay) window.toggleStatsOverlay();
+        if (sim.statsOverlayVisible && window.toggleStatsOverlay) window.toggleStatsOverlay();
         return;
     }
     if (e.key === 'Tab') {
         e.preventDefault();
-        if (!window.gameIsPaused && window.toggleStatsOverlay) window.toggleStatsOverlay();
+        if (!sim.gameIsPaused && window.toggleStatsOverlay) window.toggleStatsOverlay();
         return;
     }
     if (e.key.toLowerCase() === 'm') {
@@ -52,9 +56,9 @@ window.addEventListener('keydown', e => {
         if (window._saveSettings) window._saveSettings();
         return;
     }
-    if (e.key === ' ' && !window.gameIsPaused) {
+    if (e.key === ' ' && !sim.gameIsPaused) {
         e.preventDefault();
-        window.setUserPaused(!window.userPaused);
+        sim.userPaused = !sim.userPaused;
         if (window.updateTimePauseUI) window.updateTimePauseUI();
         return;
     }
@@ -69,40 +73,40 @@ const _inputCanvas = document.getElementById('game-canvas');
 
 _inputCanvas.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
-    window.setIsDragging(true);
-    window.setDragStartX(e.clientX);
-    window.setDragStartY(e.clientY);
-    window.setLastMouseX(e.clientX);
-    window.setLastMouseY(e.clientY);
+    sim.isDragging = true;
+    sim.dragStartX = e.clientX;
+    sim.dragStartY = e.clientY;
+    sim.lastMouseX = e.clientX;
+    sim.lastMouseY = e.clientY;
 });
 
 window.addEventListener('mouseup', e => {
     if (e.button !== 0) return;
-    if (window.isDragging) {
-        const dx = e.clientX - window.dragStartX;
-        const dy = e.clientY - window.dragStartY;
+    if (sim.isDragging) {
+        const dx = e.clientX - sim.dragStartX;
+        const dy = e.clientY - sim.dragStartY;
         if (Math.hypot(dx, dy) < 5 && window.handleGridClick) {
             window.handleGridClick(e.clientX, e.clientY);
         }
     }
-    window.setIsDragging(false);
+    sim.isDragging = false;
     _inputCanvas.style.cursor = 'default';
 });
 
 // Update hover tile position only when cursor is over the canvas (so the ghost
 // preview doesn't silently track tiles behind UI panels like the build menu).
 _inputCanvas.addEventListener('mousemove', e => {
-    window.setMouseScreenX(e.clientX);
-    window.setMouseScreenY(e.clientY);
+    sim.mouseScreenX = e.clientX;
+    sim.mouseScreenY = e.clientY;
 });
 
 window.addEventListener('mousemove', e => {
-    if (!window.isDragging) return;
-    window.camera.x -= (e.clientX - window.lastMouseX) / window.camera.zoom;
-    window.camera.y -= (e.clientY - window.lastMouseY) / window.camera.zoom;
-    window.setLastMouseX(e.clientX);
-    window.setLastMouseY(e.clientY);
-    if (Math.hypot(e.clientX - window.dragStartX, e.clientY - window.dragStartY) > 5) {
+    if (!sim.isDragging) return;
+    sim.camera.x -= (e.clientX - sim.lastMouseX) / sim.camera.zoom;
+    sim.camera.y -= (e.clientY - sim.lastMouseY) / sim.camera.zoom;
+    sim.lastMouseX = e.clientX;
+    sim.lastMouseY = e.clientY;
+    if (Math.hypot(e.clientX - sim.dragStartX, e.clientY - sim.dragStartY) > 5) {
         _inputCanvas.style.cursor = 'grabbing';
     }
 });
@@ -122,19 +126,19 @@ document.addEventListener('wheel', e => {
     // panels (build menu, research modal, settings drawer) scroll natively.
     if (e.target !== _inputCanvas) return;
     e.preventDefault();
-    if (!window.camera) return;
+    if (!sim.camera) return;
     const factor = e.deltaY < 0 ? 1.1 : 0.9;
     const rect = _inputCanvas.getBoundingClientRect();
-    const mwx = (e.clientX - rect.left) / window.camera.zoom + window.camera.x;
-    const mwy = (e.clientY - rect.top)  / window.camera.zoom + window.camera.y;
-    window.camera.zoom = Math.min(3.0, Math.max(0.5, window.camera.zoom * factor));
-    window.camera.x = mwx - (e.clientX - rect.left) / window.camera.zoom;
-    window.camera.y = mwy - (e.clientY - rect.top)  / window.camera.zoom;
+    const mwx = (e.clientX - rect.left) / sim.camera.zoom + sim.camera.x;
+    const mwy = (e.clientY - rect.top)  / sim.camera.zoom + sim.camera.y;
+    sim.camera.zoom = Math.min(3.0, Math.max(0.5, sim.camera.zoom * factor));
+    sim.camera.x = mwx - (e.clientX - rect.left) / sim.camera.zoom;
+    sim.camera.y = mwy - (e.clientY - rect.top)  / sim.camera.zoom;
     // Clamp immediately so update() never has to fight the pivot position.
-    if (window.grid) {
-        const maxX = Math.max(0, window.grid.width  * window.TILE_SIZE - _inputCanvas.width  / window.camera.zoom);
-        const maxY = Math.max(0, window.grid.height * window.TILE_SIZE - _inputCanvas.height / window.camera.zoom);
-        window.camera.x = Math.max(0, Math.min(maxX, window.camera.x));
-        window.camera.y = Math.max(0, Math.min(maxY, window.camera.y));
+    if (sim.grid) {
+        const maxX = Math.max(0, sim.grid.width  * window.TILE_SIZE - _inputCanvas.width  / sim.camera.zoom);
+        const maxY = Math.max(0, sim.grid.height * window.TILE_SIZE - _inputCanvas.height / sim.camera.zoom);
+        sim.camera.x = Math.max(0, Math.min(maxX, sim.camera.x));
+        sim.camera.y = Math.max(0, Math.min(maxY, sim.camera.y));
     }
 }, { passive: false });
