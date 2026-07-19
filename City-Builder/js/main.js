@@ -787,7 +787,7 @@ function updateRaiders(dtSec) {
 
         if (closest) {
             towerFireTimers[id] = 0;
-            closest.hp -= isT2Tower ? (TB?.tier2Damage ?? 30) : (TB?.damage ?? 25);
+            closest.hp -= isT2Tower ? (TB?.tier2Damage ?? 20) : (TB?.damage ?? 15);
             playShootSFX();
             const vp = getPooledVisualProjectile();
             vp.fromX = towerX; vp.fromY = towerY; vp.toX = closest.x; vp.toY = closest.y; vp.timer = 0; vp.duration = 0.15;

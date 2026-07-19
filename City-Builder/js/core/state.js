@@ -147,7 +147,7 @@ export const COMBAT_BALANCE = Object.freeze({
     // ATTACK mode is for. Camp defenders graze attackers lightly.
     camp:     Object.freeze({ hp: 300, waveSizeBonusPerCamp: 0.15, counterDps: 3, destroyReward: 100, destroyRaidDelaySec: 45 }),
     archer:   Object.freeze({ damage: 20, steelBowsDamage: 25, rangeTiles: 12, fireIntervalSec: 1.5 }),
-    tower:    Object.freeze({ damage: 25, tier2Damage: 30, rangeTiles: 8, tier2RangeTiles: 10, fireIntervalSec: 1.0 }),
+    tower:    Object.freeze({ damage: 15, tier2Damage: 20, rangeTiles: 8, tier2RangeTiles: 10, fireIntervalSec: 1.0 }),
     ballista: Object.freeze({ fireIntervalSec: 8.0 }),
     raider:   Object.freeze({ meleeDps: 15, buildingDamage: 50, siegeWallDamage: 75, gateBreachDps: 10 }),
     // Defend mode: soldiers/knights only engage raiders within this many tiles
