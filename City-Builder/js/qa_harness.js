@@ -226,14 +226,18 @@ function testRegressionBugs() {
     results.militaryClamped = [...window.soldiers.slice(0, 3), ...window.archers.slice(0, 3), ...window.knights.slice(0, 3)]
         .every(unit => Math.hypot(unit.x - centerX, unit.y - centerY) <= maxR + 0.01);
 
-    // Task 3 regression: soldiers/knights must engage active raiders in BOTH
-    // combat modes — previously a raider present during 'defend' mode was
-    // completely ignored while the unit stood at its rally point.
+    // Defend-mode semantics: soldiers/knights engage raiders INSIDE the rally
+    // leash (previously they ignored raiders entirely in defend mode), but they
+    // hold position against raiders far OUTSIDE the leash instead of scattering
+    // across the map.
     {
         window.raiders.length = 0;
         window.setRaidActive(true);
         window.setRaidPathBudget(1000);
-        const testRaider = new window.Raider(40 * TILE_SIZE, 40 * TILE_SIZE, 'normal');
+        // Seeded-city walls span tx 14–44 at ty 15/49 → rally ≈ (29, 32).
+        // (34, 35) is well inside the 10-tile leash; (6, 6) is far outside it.
+        const testRaider = new window.Raider(34 * TILE_SIZE, 35 * TILE_SIZE, 'normal');
+        const farRaider = new window.Raider(6 * TILE_SIZE, 6 * TILE_SIZE, 'normal');
         window.raiders.push(testRaider);
         const testSoldier = new window.Soldier(35 * TILE_SIZE, 35 * TILE_SIZE);
         const testKnight = new window.Knight(35 * TILE_SIZE, 36 * TILE_SIZE);
@@ -247,9 +251,27 @@ function testRegressionBugs() {
         const knightDistAfter = Math.hypot(testKnight.x - testRaider.x, testKnight.y - testRaider.y);
         results.soldierEngagesInDefendMode = testSoldier._chaseTarget === testRaider || soldierDistAfter < soldierDistBefore - 1;
         results.knightEngagesInDefendMode = testKnight._chaseTarget === testRaider || knightDistAfter < knightDistBefore - 1;
+        // Leash: swap in only the far raider — defenders must NOT chase it
+        window.raiders.length = 0;
+        window.raiders.push(farRaider);
+        testSoldier._chaseTarget = null; testSoldier._chasePath = []; testSoldier._chaseIndex = 0;
+        testKnight._chaseTarget = null; testKnight._chasePath = []; testKnight._chaseIndex = 0;
+        for (let i = 0; i < 5; i++) window.update(200);
+        results.defendLeashIgnoresFarRaider =
+            testSoldier._chaseTarget !== farRaider && testKnight._chaseTarget !== farRaider;
         window.soldiers.pop(); window.knights.pop();
         window.raiders.length = 0;
         window.setRaidActive(false);
+    }
+
+    // Difficulty must actually change raid sizes (raidStrength was previously
+    // saved/migrated but never read — Settler and Iron Crown played identically).
+    {
+        const settlerSize = window.getScaledWaveSize(5, 40);  // settler wave-5 strength
+        const lordSize    = window.getScaledWaveSize(5, 48);  // lord baseline
+        const ironSize    = window.getScaledWaveSize(5, 60);  // iron crown
+        results.difficultyScalesWaves = settlerSize < lordSize && lordSize < ironSize
+            && lordSize === (window.RAID_WAVE_SIZES?.[4] ?? 32);
     }
 
     // Task 1 regression: units spawned exactly on top of each other (the
@@ -268,7 +290,7 @@ function testRegressionBugs() {
         }
         for (let i = 0; i < 20; i++) {
             window.rebuildSeparationGrid();
-            for (const c of stack) c.update(16, window.grid);
+            for (const c of stack) c.update(0.016, window.grid); // dtSec (Citizen.update now takes seconds)
         }
         let anyOverlap = false;
         for (let i = 0; i < stack.length; i++) {
@@ -281,18 +303,6 @@ function testRegressionBugs() {
             const idx = window.citizens.indexOf(c);
             if (idx !== -1) window.citizens.splice(idx, 1);
         }
-    }
-
-    // Task 2 regression: a unit walking a known direction (due east) must
-    // rotate to face that direction rather than staying at rotation 0.
-    {
-        if (window.grid.inBounds(10, 10)) window.grid.structures[10][10] = null;
-        if (window.grid.inBounds(11, 10)) window.grid.structures[10][11] = null;
-        const facer = new window.Citizen(10 * TILE_SIZE + TILE_SIZE / 2, 10 * TILE_SIZE + TILE_SIZE / 2);
-        facer.job = 'idle';
-        facer._directWalkToTile(11, 10, window.grid); // due east
-        for (let i = 0; i < 10; i++) facer.update(16, window.grid);
-        results.unitRotatesToFaceMovement = Math.abs(facer.rotation) > 0.05;
     }
 
     // Raid timing: expiring the timer at night enters a 30s scout warning
@@ -353,7 +363,7 @@ function testRegressionBugs() {
         builder.y = ty * TILE_SIZE + TILE_SIZE / 2;
         builder.state = 'idle';
         builder._phase = 'building';
-        builder.update(1000, window.grid);
+        builder.update(1.0, window.grid); // dtSec (Citizen.update now takes seconds)
     }
     results.monumentGetsBuilder = !!builder;
     results.monumentProgresses = (window.grid.structures[ty]?.[tx]?.progress ?? 0) > 0;

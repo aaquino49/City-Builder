@@ -79,8 +79,9 @@
             <input type="range" id="vol-sfx" class="parch-slider" min="0" max="100" value="100">
         </div>
         <div class="drawer-actions">
-            <button id="btn-save" class="scroll-btn">✎ SAVE CITY</button>
-            <button id="btn-load" class="scroll-btn">⌂ LOAD CITY</button>
+            <button id="btn-save" class="scroll-btn" title="Manual save slot — never overwritten by autosave">✎ SAVE CITY</button>
+            <button id="btn-load" class="scroll-btn" title="Loads your manual save (or the autosave if none exists)">⌂ LOAD CITY</button>
+            <button id="btn-load-autosave" class="scroll-btn" title="Loads the rolling 10-second autosave">↺ LOAD AUTOSAVE</button>
             <button id="btn-mute" class="scroll-btn">♪ MUTE</button>
             <button id="btn-reset" class="scroll-btn danger">✕ RESET GAME</button>
         </div>
@@ -359,6 +360,7 @@
             </div>
 
             <div class="game-over-footer">
+                <button id="game-over-continue" class="scroll-btn hidden">♛ CONTINUE REIGN</button>
                 <button id="game-over-restart" class="scroll-btn wine">✦ RESTART REIGN</button>
             </div>
         </div>

@@ -103,10 +103,33 @@ function assignCitizenToHide(c) {
         c._workTY = best.ty;
         c._setTargetTile(best.tx, best.ty, grid);
     } else {
-        c._workTX = -1;
-        c._workTY = -1;
-        c._phase = 'hidden';
+        // No houses to hide in — flee toward the town center instead of
+        // freezing in the open where kill-objective raiders execute them.
+        const flee = _findWalkableNear(32, 32);
+        if (flee) {
+            c._workTX = flee.tx;
+            c._workTY = flee.ty;
+            c._setTargetTile(flee.tx, flee.ty, grid);
+        } else {
+            c._workTX = -1;
+            c._workTY = -1;
+            c._phase = 'hidden';
+        }
     }
+}
+
+// Ring-search for the nearest friendly-walkable tile around (tx, ty).
+function _findWalkableNear(tx, ty, maxRadius = 6) {
+    if (isFriendlyWalkable(tx, ty)) return { tx, ty };
+    for (let radius = 1; radius <= maxRadius; radius++) {
+        for (let dy = -radius; dy <= radius; dy++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+                if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+                if (isFriendlyWalkable(tx + dx, ty + dy)) return { tx: tx + dx, ty: ty + dy };
+            }
+        }
+    }
+    return null;
 }
 
 function demolishPlayerStructure(tx, ty) {
@@ -209,6 +232,17 @@ function handleGridClick(clientX, clientY) {
     }
 
     if (!gameState.selectedTool) {
+        // Clicking the merchant while he's still on the map reopens the trade
+        // screen (an accidental FAREWELL is no longer permanent).
+        if (merchantNPC && (merchantNPC.state === 'trading' || merchantNPC.state === 'departing')) {
+            const mtx = Math.floor(merchantNPC.x / TILE_SIZE);
+            const mty = Math.floor(merchantNPC.y / TILE_SIZE);
+            if (Math.abs(tx - mtx) <= 1 && Math.abs(ty - mty) <= 1) {
+                merchantNPC.state = 'trading';
+                openTradeModal();
+                return;
+            }
+        }
         const root = getRootStructureAt(tx, ty);
         const s = root.structure;
         const rtx = root.tx;
@@ -321,8 +355,8 @@ function updateSoldiers(dtSec, activeRaiders) {
             if (r.state !== 'walking') continue;
             const dist = Math.hypot(r.x - sol.x, r.y - sol.y);
             if (dist <= TILE_SIZE) {
-                r.hp   -= 15 * dtSec;
-                sol.hp -= 15 * dtSec;
+                r.hp   -= (COMBAT_BALANCE?.soldier?.meleeDps ?? 15) * dtSec;
+                sol.hp -= (COMBAT_BALANCE?.raider?.meleeDps ?? 15) * dtSec;
                 if (Math.random() < dtSec * 8) {
                     spawnParticle((r.x + sol.x) / 2, (r.y + sol.y) / 2, 'slash', 0.2);
                 }
@@ -396,8 +430,8 @@ function updateKnights(dtSec, activeRaiders) {
             if (r.state !== 'walking') continue;
             const dist = Math.hypot(r.x - k.x, r.y - k.y);
             if (dist <= TILE_SIZE) {
-                r.hp -= 20 * dtSec;
-                k.hp -= 7.5 * dtSec; // 15 dmg/sec * 50% armor
+                r.hp -= (COMBAT_BALANCE?.knight?.meleeDps ?? 20) * dtSec;
+                k.hp -= (COMBAT_BALANCE?.raider?.meleeDps ?? 15) * (COMBAT_BALANCE?.knight?.damageTakenMult ?? 0.5) * dtSec;
                 if (Math.random() < dtSec * 8) {
                     spawnParticle((r.x + k.x) / 2, (r.y + k.y) / 2, 'slash', 0.2);
                 }
@@ -437,7 +471,7 @@ function updateGates(dtSec, activeRaiders) {
                 const distSq = dx * dx + dy * dy;
                 if (distSq <= breachLimitSq) {
                     const maxHp = getMaxHP('gate');
-                    s.hp = (s.hp ?? maxHp) - 10 * dtSec;
+                    s.hp = (s.hp ?? maxHp) - (COMBAT_BALANCE?.raider?.gateBreachDps ?? 10) * dtSec;
                     if (s.hp <= 0) {
                         delete _tier2Upgrades[`${tx},${ty}`];
                         grid.structures[ty][tx] = createRubble();
@@ -539,8 +573,23 @@ function _getRaiderType(waveNum) {
 }
 
 function getRaidWaveSize(waveNum) {
-    if (waveNum < 1 || waveNum > FINAL_RAID_WAVE) return 0;
-    return RAID_WAVE_SIZES[waveNum - 1];
+    if (waveNum < 1) return 0;
+    if (waveNum <= FINAL_RAID_WAVE) return RAID_WAVE_SIZES[waveNum - 1];
+    // Endless mode: waves keep growing past the final scripted wave, capped for perf.
+    if (!gameState.endless) return 0;
+    const over = waveNum - FINAL_RAID_WAVE;
+    return Math.min(260, Math.round(RAID_WAVE_SIZES[FINAL_RAID_WAVE - 1] * Math.pow(1.18, over)));
+}
+
+// Difficulty (and diplomacy penalties like raid_strong) scale the wave via
+// raidStrength relative to the Lord baseline. Previously raidStrength was
+// saved/migrated but never read — difficulty had no effect on raids at all.
+function getScaledWaveSize(waveNum, strength = raidStrength) {
+    const base = getRaidWaveSize(waveNum);
+    if (base <= 0) return 0;
+    const lordBaseline = getRaidStrengthForWave(Math.min(waveNum, FINAL_RAID_WAVE), 'lord');
+    const mult = lordBaseline > 0 ? strength / lordBaseline : 1;
+    return Math.max(1, Math.round(base * mult));
 }
 
 function chooseRaidDirections(waveNum, waveSize) {
@@ -575,9 +624,46 @@ let _raidersDefeatedAtWaveStart = 0;
 // Allows loadGame() to re-baseline the per-wave kill counter after a mid-raid load
 window._setRaidersDefeatedAtWaveStart = v => { _raidersDefeatedAtWaveStart = v; };
 
+// Wave plan built at scout time so the scout warning can preview the ACTUAL
+// incoming wave (size, composition, directions) — startRaidWave then spawns
+// exactly what was announced.
+let _raidPlan = null;
+
+function _buildRaidPlan(waveNum) {
+    const size = getScaledWaveSize(waveNum);
+    const dirs = chooseRaidDirections(waveNum, size);
+    const spawns = [];
+    let torch = 0, siege = 0;
+    for (let i = 0; i < size; i++) {
+        const pos = getSpawnPos(dirs[i % dirs.length]);
+        const type = _getRaiderType(waveNum);
+        if (type === 'torch') torch++;
+        else if (type === 'siege') siege++;
+        spawns.push({ x: pos.x, y: pos.y, type });
+    }
+    return { waveNum, size, dirs, spawns, torch, siege };
+}
+
+// Enters the 30s scout warning with a concrete preview of the incoming wave.
+function beginScoutPhase() {
+    setRaidTimer(0);
+    setRaidQueued(false);
+    setScoutPhase(true);
+    setScoutTimer(30);
+    _raidPlan = _buildRaidPlan(raidCount + 1);
+    const comp = [];
+    if (_raidPlan.torch) comp.push(`${_raidPlan.torch} torch`);
+    if (_raidPlan.siege) comp.push(`${_raidPlan.siege} siege`);
+    const compStr = comp.length ? ` (${comp.join(', ')})` : '';
+    showEventBanner('SCOUTS SPOTTED!',
+        `${_raidPlan.size} raiders${compStr} from the ${_raidPlan.dirs.join('/')} — close your gates!`);
+    playRaidWarningSFX();
+    setRaidWarningPlayed(true);
+}
+
 function startRaidWave() {
     const waveNum = raidCount + 1;
-    if (waveNum > FINAL_RAID_WAVE) return;
+    if (waveNum > FINAL_RAID_WAVE && !gameState.endless) return;
     _raidersDefeatedAtWaveStart = gameState.raidersDefeated || 0;
     setRaidActive(true);
     setRaidActiveTimer(0);
@@ -590,14 +676,15 @@ function startRaidWave() {
     // raid-warning vignette is owned by updateRaidHUD (cached class writes) —
     // touching classList directly here would desync its cache
     sendCitizensToHide();
-    const waveSize = getRaidWaveSize(waveNum);
-    showEventBanner(`RAID WAVE ${waveNum}`, `${waveSize} raiders are attacking now!`);
+    // Spawn exactly what the scouts announced; rebuild only if no plan exists
+    // (e.g. loaded a save mid-scout-phase).
+    const plan = (_raidPlan && _raidPlan.waveNum === waveNum) ? _raidPlan : _buildRaidPlan(waveNum);
+    _raidPlan = null;
+    showEventBanner(`RAID WAVE ${waveNum}`, `${plan.size} raiders are attacking now!`);
     playRaidWarningSFX();
     setRaidWarningPlayed(true);
-    const dirs = chooseRaidDirections(waveNum, waveSize);
-    for (let i = 0; i < waveSize; i++) {
-        const pos = getSpawnPos(dirs[i % dirs.length]);
-        raiders.push(new Raider(pos.x, pos.y, _getRaiderType(waveNum)));
+    for (const spawn of plan.spawns) {
+        raiders.push(new Raider(spawn.x, spawn.y, spawn.type));
     }
 }
 
@@ -610,13 +697,14 @@ function updateRaiders(dtSec) {
         const s = grid.structures[ty]?.[tx];
         if (!s || s.def.key !== 'tower') continue;
         const id = `${tx}_${ty}`;
+        const TB = COMBAT_BALANCE?.tower;
         towerFireTimers[id] = (towerFireTimers[id] || 0) + dtSec;
-        if (towerFireTimers[id] < 1.0) continue;
+        if (towerFireTimers[id] < (TB?.fireIntervalSec ?? 1.0)) continue;
 
         const towerX = tx * TILE_SIZE + TILE_SIZE / 2;
         const towerY = ty * TILE_SIZE + TILE_SIZE / 2;
         const isT2Tower = !!_tier2Upgrades[`${tx},${ty}`];
-        const RANGE = (isT2Tower ? 10 : 8) * TILE_SIZE;
+        const RANGE = (isT2Tower ? (TB?.tier2RangeTiles ?? 10) : (TB?.rangeTiles ?? 8)) * TILE_SIZE;
         const RANGESQ = RANGE * RANGE;
         let closest = null, closestDistSq = Infinity;
         for (const r of raiders) {
@@ -629,7 +717,7 @@ function updateRaiders(dtSec) {
 
         if (closest) {
             towerFireTimers[id] = 0;
-            closest.hp -= isT2Tower ? 30 : 25;
+            closest.hp -= isT2Tower ? (TB?.tier2Damage ?? 30) : (TB?.damage ?? 25);
             playShootSFX();
             const vp = getPooledVisualProjectile();
             vp.fromX = towerX; vp.fromY = towerY; vp.toX = closest.x; vp.toY = closest.y; vp.timer = 0; vp.duration = 0.15;
@@ -647,7 +735,7 @@ function updateRaiders(dtSec) {
         if (!s || s.def.key !== 'ballista_tower') continue;
         const id = `bt_${tx}_${ty}`;
         towerFireTimers[id] = (towerFireTimers[id] || 0) + dtSec;
-        if (towerFireTimers[id] < 8.0) continue;
+        if (towerFireTimers[id] < (COMBAT_BALANCE?.ballista?.fireIntervalSec ?? 8.0)) continue;
         const bx = tx * TILE_SIZE + TILE_SIZE / 2;
         const by = ty * TILE_SIZE + TILE_SIZE / 2;
         const RANGE = (bt.range ?? 16) * TILE_SIZE;
@@ -755,7 +843,7 @@ function resolveRaid() {
         // Reward scales with the wave and how many raiders were actually slain
         const reward = 50 + waveNum * 40 + killsThisWave * 2;
         gameState.gold += reward;
-        if (waveNum >= FINAL_RAID_WAVE) {
+        if (waveNum >= FINAL_RAID_WAVE && !gameState.endless) {
             setRaidCount(FINAL_RAID_WAVE);
             stopRaidWarningSFX();
             triggerVictory('wave10');
@@ -788,9 +876,9 @@ document.getElementById('modal-continue').addEventListener('click', () => {
     setRaidTimer(RAID_DURATION);
     const completedWave = raidCount + 1;
     const nextWave = completedWave + 1;
-    if (nextWave <= FINAL_RAID_WAVE) {
-        setRaidStrength(getRaidStrengthForWave(nextWave));
-    }
+    // Reset any raid_strong penalty back to the difficulty preset for the next
+    // wave (clamped to the final scripted wave's strength in endless mode).
+    setRaidStrength(getRaidStrengthForWave(Math.min(nextWave, FINAL_RAID_WAVE)));
     setRaidCount(completedWave);
     setRaidWarningPlayed(false);
     setRaidWarningSpawnCount(0);
@@ -813,7 +901,7 @@ document.getElementById('modal-continue').addEventListener('click', () => {
     activeProjectiles.length = 0;
     particles.length = 0;
     Object.keys(towerFireTimers).forEach(k => delete towerFireTimers[k]);
-    if (completedWave >= FINAL_RAID_WAVE) {
+    if (completedWave >= FINAL_RAID_WAVE && !gameState.endless) {
         stopRaidWarningSFX();
         triggerVictory('wave10');
         return;
@@ -846,13 +934,17 @@ document.getElementById('btn-mute-icon').addEventListener('click', () => {
     if (muteBtn) muteBtn.textContent = muted ? '♪ UNMUTE' : '♪ MUTE';
 });
 document.getElementById('btn-help-icon').addEventListener('click', () => {
-    showEventBanner('KEYBOARD SHORTCUTS', '1–9 Build · 0 Demolish · ESC Cancel · TAB Stats');
+    // Full help overlay (reuses the tutorial pages) instead of a 4s banner
+    showTutorial();
 });
 
 // --- Settings ---
-document.getElementById('btn-save').addEventListener('click', () => { saveGame(); flashAutosave(); });
-document.getElementById('btn-load').addEventListener('click', () => {
-    if (!loadGame()) return;
+// SAVE CITY writes the manual slot, which the 10s autosave never touches — so
+// a deliberate save survives later mistakes.
+document.getElementById('btn-save').addEventListener('click', () => { saveGame(MANUAL_SAVE_KEY); flashAutosave(); });
+
+function loadAndStart(slotKey) {
+    if (!loadGame(slotKey)) return;
     selectedDifficultyKey = gameState.difficulty || DEFAULT_DIFFICULTY_KEY;
     renderDifficultyOptions();
     initAudio();
@@ -863,6 +955,13 @@ document.getElementById('btn-load').addEventListener('click', () => {
     setTimeScale(1);
     if (window.updateTimePauseUI) window.updateTimePauseUI();
     lastTime = 0;
+}
+document.getElementById('btn-load').addEventListener('click', () => {
+    // Prefer the manual slot; fall back to the autosave if none exists yet
+    loadAndStart(localStorage.getItem(MANUAL_SAVE_KEY) ? MANUAL_SAVE_KEY : SAVE_KEY);
+});
+document.getElementById('btn-load-autosave')?.addEventListener('click', () => {
+    loadAndStart(SAVE_KEY);
 });
 document.getElementById('btn-reset').addEventListener('click', () => {
     if (confirm('Reset game? All progress will be lost.')) resetGame();
@@ -981,6 +1080,9 @@ function assignCitizenJobs() {
 }
 
 function updatePassiveFarmProduction(dtSec) {
+    // "Farms are barren" — drought halts passive output too (worker harvests
+    // already checked droughtActive; passive production silently didn't).
+    if (droughtActive) { passiveFarmTimer = 0; return; }
     passiveFarmTimer += dtSec;
     const cycleSec = window.PRODUCTION_BALANCE?.farmCycleSec ?? 2.0;
     if (passiveFarmTimer < cycleSec) return;
@@ -1003,10 +1105,10 @@ function updatePassiveFarmProduction(dtSec) {
     gameState.food = Math.min(getFoodCap(), gameState.food + passiveFood);
 }
 
-function updateCitizensSafely(dtMs, timestamp = performance.now()) {
+function updateCitizensSafely(dtSec, timestamp = performance.now()) {
     for (const c of citizens) {
         try {
-            c.update(dtMs, grid);
+            c.update(dtSec, grid);
         } catch (err) {
             if (timestamp - _lastCitizenUpdateErrorTime > 1000) {
                 _lastCitizenUpdateErrorTime = timestamp;
@@ -1014,6 +1116,55 @@ function updateCitizensSafely(dtMs, timestamp = performance.now()) {
             }
         }
     }
+}
+
+// Once per day: trees slowly regrow next to existing trees and depleted
+// stone/iron deposits are occasionally replaced, so harvest nodes stay a
+// renewable (but scarce) part of the economy instead of a one-way ratchet.
+function regrowNature() {
+    if (gameState.season === 'Winter') return; // nothing grows in winter
+    const trees = [];
+    let stoneCount = 0, ironCount = 0;
+    for (let ty = 0; ty < grid.height; ty++) {
+        for (let tx = 0; tx < grid.width; tx++) {
+            const s = grid.structures[ty][tx];
+            if (!s) continue;
+            if (s.def.key === 'obstacle_tree') trees.push({ tx, ty });
+            else if (s.def.key === 'stone_deposit') stoneCount++;
+            else if (s.def.key === 'iron_vein') ironCount++;
+        }
+    }
+    const TREE_CAP = 220; // ≈ initial map density
+    const newTrees = [];
+    if (trees.length > 0 && trees.length < TREE_CAP) {
+        for (const t of trees) {
+            if (trees.length + newTrees.length >= TREE_CAP) break;
+            if (Math.random() >= 0.05) continue;
+            const dirs = [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }];
+            const d = dirs[Math.floor(Math.random() * dirs.length)];
+            const nx = t.tx + d.dx, ny = t.ty + d.dy;
+            if (!grid.inBounds(nx, ny)) continue;
+            if (grid.structures[ny][nx] || grid.tiles[ny][nx] !== 'tile_grass') continue;
+            newTrees.push({ tx: nx, ty: ny });
+        }
+    }
+    for (const { tx, ty } of newTrees) {
+        if (grid.structures[ty][tx]) continue;
+        grid.structures[ty][tx] = { def: TREE_DEF };
+        patchStaticCache(tx, ty);
+    }
+    const spawnDeposit = (def, hp) => {
+        for (let tries = 0; tries < 24; tries++) {
+            const tx = Math.floor(Math.random() * grid.width);
+            const ty = Math.floor(Math.random() * grid.height);
+            if (grid.structures[ty][tx] || grid.tiles[ty][tx] !== 'tile_grass') continue;
+            grid.structures[ty][tx] = { def, hp };
+            patchStaticCache(tx, ty);
+            return;
+        }
+    };
+    if (stoneCount < 6 && Math.random() < 0.30) spawnDeposit(STONE_DEP_DEF, 5);
+    if (ironCount < 3 && Math.random() < 0.25) spawnDeposit(IRON_VEIN_DEF, 5);
 }
 
 function updateRubbleDecay(dtSec) {
@@ -1049,7 +1200,9 @@ function update(dtMs) {
     if (!gameState.started || gameIsPaused || userPaused) return;
     const dtSec = (dtMs / 1000) * timeScale;
     setGriefPenalty(Math.max(0, _griefPenalty - dtSec * 0.25));
-    const panSpeed = 10;
+    // Frame-rate independent, zoom-compensated panning (was 10px per FRAME,
+    // which panned 2.4× faster on a 144Hz monitor than at 60Hz).
+    const panSpeed = 600 * _dtReal / camera.zoom;
     if (keys['w'] || keys['arrowup'])    camera.y -= panSpeed;
     if (keys['s'] || keys['arrowdown'])  camera.y += panSpeed;
     if (keys['a'] || keys['arrowleft'])  camera.x -= panSpeed;
@@ -1068,15 +1221,10 @@ function update(dtMs) {
             setRaidTimer(raidTimer + dtSec); // elapsed-while-queued safety counter
             const _qPhase = _getDayPhase(dayTimer);
             if (_qPhase === 'dusk' || _qPhase === 'night' || raidTimer >= 45) {
-                setRaidQueued(false);
-                setRaidTimer(0);
-                setScoutPhase(true);
-                setScoutTimer(30);
-                showEventBanner('SCOUTS SPOTTED!', 'Raiders approach — close your gates!');
-                playRaidWarningSFX(); setRaidWarningPlayed(true);
+                beginScoutPhase();
             }
         }
-        if (raidCount >= FINAL_RAID_WAVE) {
+        if (raidCount >= FINAL_RAID_WAVE && !gameState.endless) {
             setRaidTimer(0);
             setRaidQueued(false);
             setScoutPhase(false);
@@ -1090,11 +1238,7 @@ function update(dtMs) {
                 if (_allianceTimer > 0) {
                     setRaidTimer(RAID_DURATION); // alliance suppresses this raid
                 } else if (raidCount === 0 || _rPhase === 'dusk' || _rPhase === 'night') {
-                    setRaidTimer(0);
-                    setScoutPhase(true);
-                    setScoutTimer(30);
-                    showEventBanner('SCOUTS SPOTTED!', 'Raiders approach — close your gates!');
-                    playRaidWarningSFX(); setRaidWarningPlayed(true);
+                    beginScoutPhase();
                 } else {
                     setRaidTimer(0);
                     setRaidQueued(true); // scouts launch at dusk
@@ -1104,6 +1248,19 @@ function update(dtMs) {
         }
     } else {
         setRaidActiveTimer(raidActiveTimer + dtSec);
+        // Failsafe: a raid that somehow drags past RAID_ACTIVE_TIMEOUT (stuck
+        // raider, starved pathfinding) force-retreats every remaining walker so
+        // the game can never stall in a permanent raid.
+        if (raidActiveTimer >= RAID_ACTIVE_TIMEOUT) {
+            for (const r of raiders) {
+                if (r.state !== 'walking') continue;
+                r._attacking = false;
+                r._target = { type: 'retreat' };
+                r._path = [];
+                r._pathIndex = 0;
+                r._repathTimer = 0;
+            }
+        }
         let anyWalking = false;
         for (let i = 0; i < raiders.length; i++) {
             if (raiders[i].state === 'walking') { anyWalking = true; break; }
@@ -1134,6 +1291,7 @@ function update(dtMs) {
             if (gameState.season === 'Autumn') { gameState.food += 20; gameState.food = Math.min(gameState.food, getFoodCap()); }
             setLastSeason(gameState.season);
         }
+        regrowNature();
         updateDaySeason();
     } else {
         setDayTimer(nextDayTimer);
@@ -1151,6 +1309,11 @@ function update(dtMs) {
     // over citizens/soldiers/archers/knights/raiders) so every unit's per-frame
     // separation check is a handful of bucket lookups instead of an O(n²) scan.
     rebuildSeparationGrid();
+    // Per-frame melee context: reset target-pile counts and cache the defend
+    // rally tile once (soldiers/knights read window._defendRally for the leash).
+    window._combatTargetCounts?.clear();
+    window._defendRally = (_combatMode === 'defend' && raidActive && window._getDefendRallyTile)
+        ? window._getDefendRallyTile() : null;
     // Refill the shared active-raiders scratch list in place (no allocation) — reused by
     // soldiers, archers, knights, gates.
     _activeRaiders.length = 0;
@@ -1173,7 +1336,7 @@ function update(dtMs) {
         setJobScanTimer(nextJobScanTimer);
     }
 
-    updateCitizensSafely(dtMs * timeScale);
+    updateCitizensSafely(dtSec);
 
     updateActiveProjectiles(dtSec);
     updatePassiveFarmProduction(dtSec);
@@ -1291,11 +1454,15 @@ function update(dtMs) {
     updateResearch(dtSec);
 
     // Building the Monument is an immediate victory condition.
-    for (const { tx, ty } of activeMonuments) {
-        const s = grid.structures[ty][tx];
-        if (s && (s.progress ?? 1.0) >= 1.0) {
-            triggerVictory('monument');
-            break;
+    // victoryAchieved guards against re-triggering the modal every frame after
+    // the player chooses CONTINUE REIGN.
+    if (!gameState.victoryAchieved) {
+        for (const { tx, ty } of activeMonuments) {
+            const s = grid.structures[ty][tx];
+            if (s && (s.progress ?? 1.0) >= 1.0) {
+                triggerVictory('monument');
+                break;
+            }
         }
     }
 
@@ -1384,11 +1551,16 @@ let selectedDifficultyKey = DEFAULT_DIFFICULTY_KEY;
 function renderDifficultyOptions() {
     const optionsEl = document.getElementById('difficulty-options');
     if (!optionsEl) return;
+    const lordPreset = getDifficultyPreset('lord');
     optionsEl.innerHTML = DIFFICULTY_ORDER.map(key => {
         const preset = getDifficultyPreset(key);
+        // Concrete deltas so the choice isn't flavor-text only
+        const last = preset.raidStrengths.length - 1;
+        const raidPct = Math.round((preset.raidStrengths[last] / lordPreset.raidStrengths[last]) * 100);
         return `<button type="button" class="difficulty-card${key === selectedDifficultyKey ? ' active' : ''}" data-difficulty="${key}">
             <div class="difficulty-card-name">${preset.label}</div>
             <div class="difficulty-card-tag">${DIFFICULTY_TAGS[key] || ''}</div>
+            <div class="difficulty-card-tag" style="opacity:0.75;font-size:0.85em;margin-top:2px;">Raids ${raidPct}% · Monument ${preset.monumentCost.gold}G</div>
         </button>`;
     }).join('');
     optionsEl.querySelectorAll('.difficulty-card').forEach(btn => {
@@ -1446,6 +1618,19 @@ const gameOverRestartBtn = document.getElementById('game-over-restart');
 if (gameOverRestartBtn) {
     gameOverRestartBtn.addEventListener('click', () => {
         resetGame();
+    });
+}
+
+// Endless mode: keep playing after victory — raids continue and keep scaling.
+const gameOverContinueBtn = document.getElementById('game-over-continue');
+if (gameOverContinueBtn) {
+    gameOverContinueBtn.addEventListener('click', () => {
+        gameState.endless = true;
+        document.getElementById('game-over-modal').classList.remove('open');
+        setGameIsPaused(false);
+        if (raidTimer <= 0) setRaidTimer(RAID_DURATION);
+        showEventBanner('ENDLESS REIGN', 'The raids will keep coming, ever stronger. Hold the line!');
+        updateRaidHUD();
     });
 }
 
@@ -1627,6 +1812,7 @@ Object.assign(window, {
     spawnCitizen, trainSoldier, updateSoldiers, trainArcher, updateArchers,
     trainKnight, updateKnights, updateGates, killRaider, fireArrow, fireBolt,
     updateActiveProjectiles, _startFireAtTile, _getRaiderType, getRaidWaveSize,
+    getScaledWaveSize, showTutorial,
     chooseRaidDirections, getSpawnPos, sendCitizensToHide, startRaidWave,
     updateRaiders, updateEffects, resolveRaid, assignCitizenJobs, update, loop,
     getCitizenMovementDebug: () => citizens.reduce((summary, c) => {

@@ -21,6 +21,8 @@ class IncidentManager {
         this._nextTimer = 45 + Math.random() * 45;
     }
 
+    // Post-raid grace period is intentionally shorter than the normal 45–90s
+    // cadence so the peace after a raid isn't dead air for too long.
     resetTimer() { this._nextTimer = 30 + Math.random() * 30; }
 
     update(dtSec) {
@@ -146,11 +148,13 @@ class IncidentManager {
             const damageMult = Math.max(0, 1 - firefighters * 0.25);
             s.hp = (s.hp ?? getMaxHP(s.def.key)) - 5 * dtSec * damageMult;
             if (Math.random() < dtSec * 0.4) playFireSFX();
-            // Attract idle citizens within 10 tiles — throttled to avoid per-frame A* calls
+            // Attract idle citizens within 10 tiles — throttled to avoid per-frame A* calls.
+            // Only IDLE citizens respond: pulling workers created a tug-of-war where their
+            // job state machine immediately re-pathed them back to the workplace.
             if (!s._fireAttractTimer || s._fireAttractTimer <= 0) {
                 s._fireAttractTimer = 2.0;
                 for (const c of citizens) {
-                    if (c.job === 'hiding' || c.state === 'walking') continue;
+                    if (c.job !== 'idle' || c.state === 'walking') continue;
                     const dist = Math.hypot(c.x - fx, c.y - fy);
                     if (dist <= 10 * TILE_SIZE && dist > firefightRange) {
                         const angle = Math.atan2(c.y - fy, c.x - fx);
@@ -202,6 +206,9 @@ class IncidentManager {
                     if (!grid.inBounds(nx, ny)) continue;
                     const s2 = grid.structures[ny][nx];
                     if (!s2 || _NON_BURNABLE.has(s2.def.key)) continue;
+                    // Under-construction buildings can't be ignited directly — don't
+                    // let spread reach them either (was an inconsistency).
+                    if ((s2.progress ?? 1.0) < 1.0) continue;
                     if (a.fires.some(f => f.tx === nx && f.ty === ny)) continue;
                     if (s2.hp === undefined) s2.hp = _BUILDING_HP[s2.def.key] ?? 100;
                     candidates.push({ tx: nx, ty: ny });
@@ -1040,11 +1047,25 @@ function updateStatsOverlay() {
                  + archers.length  * (ECONOMY_BALANCE?.militaryUpkeep?.archer ?? 1)
                  + knights.length  * (ECONOMY_BALANCE?.militaryUpkeep?.knight ?? 2);
     const taxPerMin = Math.round((baseTax + tradeBonus - upkeep) / TAX_INTERVAL * 60);
-    const foodProdPerMin = (farmers * 2.5 * 60).toFixed(0);
-    const foodDrainPerMin = Math.round(gameState.population / TAX_INTERVAL * 60);
+    // Real production math (was hardcoded estimates that misinformed the player)
+    const seasonMod = SEASON_MODIFIERS[SEASONS.indexOf(gameState.season)];
+    const PB = window.PRODUCTION_BALANCE || {};
+    const cycleSec = PB.farmCycleSec ?? 2.0;
+    const cropRotation = !!gameState.upgrades?.crop_rotation;
+    const workerFoodPerCycle = (PB.farmBaseFoodPerCycle ?? 13.5) * seasonMod.foodYieldMult + (cropRotation ? 2 : 0);
+    const passivePerFarmCycle = (PB.farmPassiveFoodPerCycle ?? 2.25) + (cropRotation ? 0.5 : 0);
+    const farmCount = window.activeFarms?.length ?? 0;
+    const foodProdPerMin = droughtActive ? 0 : Math.round(
+        farmers * workerFoodPerCycle * (60 / cycleSec) +
+        farmCount * passivePerFarmCycle * (60 / cycleSec));
+    const militaryCount = soldiers.length + archers.length + knights.length;
+    const foodDrainPerMin = Math.round((gameState.population + militaryCount) * seasonMod.foodDrainMult / TAX_INTERVAL * 60);
     const foodPerMin = `+${foodProdPerMin} / -${foodDrainPerMin}`;
-    const woodPerMin = cutters > 0 ? '~150' : '0';
-    const stonePerMin = stoneMins > 0 ? '~300' : '0';
+    // Gather trips vary with travel distance — estimate from a typical round trip
+    const tripSec = PB.gatherTripSecEstimate ?? 8;
+    const woodPerMin = Math.round(cutters * 10 * seasonMod.woodYieldMult * (60 / tripSec));
+    const stonePerMin = Math.round(stoneMins * 10 * (60 / tripSec));
+    const ironPerMin = Math.round(ironMins * 10 * (60 / tripSec));
     overlay.innerHTML = `
         <div class="stats-panel">
             <div class="stats-panel-title">REALM LEDGER · ${gameState.season} Day ${gameState.day}</div>
@@ -1060,10 +1081,11 @@ function updateStatsOverlay() {
             </div>
             <div class="stats-income-title">PRODUCTION · PER MINUTE</div>
             <div class="stats-income-grid">
-                <div class="ledger-row"><span class="ledger-label">Gold</span><span class="ledger-value positive">+${taxPerMin}</span></div>
-                <div class="ledger-row"><span class="ledger-label">Food</span><span class="ledger-value positive">+${foodPerMin}</span></div>
-                <div class="ledger-row"><span class="ledger-label">Wood</span><span class="ledger-value positive">${cutters > 0 ? '+' + woodPerMin : '0'}</span></div>
-                <div class="ledger-row"><span class="ledger-label">Stone</span><span class="ledger-value positive">${stoneMins > 0 ? '+' + stonePerMin : '0'}</span></div>
+                <div class="ledger-row"><span class="ledger-label">Gold</span><span class="ledger-value positive">${taxPerMin >= 0 ? '+' : ''}${taxPerMin}</span></div>
+                <div class="ledger-row"><span class="ledger-label">Food</span><span class="ledger-value positive">${foodPerMin}${droughtActive ? ' (drought)' : ''}</span></div>
+                <div class="ledger-row"><span class="ledger-label">Wood</span><span class="ledger-value positive">${cutters > 0 ? '≈+' + woodPerMin : '0'}</span></div>
+                <div class="ledger-row"><span class="ledger-label">Stone</span><span class="ledger-value positive">${stoneMins > 0 ? '≈+' + stonePerMin : '0'}</span></div>
+                <div class="ledger-row"><span class="ledger-label">Iron</span><span class="ledger-value positive">${ironMins > 0 ? '≈+' + ironPerMin : '0'}</span></div>
             </div>
             <div class="stats-footer">[TAB] to close</div>
         </div>

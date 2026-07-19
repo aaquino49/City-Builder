@@ -158,9 +158,6 @@ function _moveUnitAlongPath(unit, dtSec, grid, speed, idleWaitMin = 0.5, idleWai
     const t = Math.min(1.0, unit._moveTimer / unit.speed);
     unit.x = unit._moveFromX + (unit.targetX - unit._moveFromX) * t;
     unit.y = unit._moveFromY + (unit.targetY - unit._moveFromY) * t;
-    // Face the whole-segment direction (stable for the tween's duration) rather
-    // than deriving it frame-to-frame, which would jitter with the tween easing.
-    _updateFacing(unit, unit.targetX - unit._moveFromX, unit.targetY - unit._moveFromY, dtSec);
     if (t < 1.0) return;
     unit.x = unit.targetX;
     unit.y = unit.targetY;
@@ -175,30 +172,49 @@ const _archerDefenseContext = {
     postCounts: new Map(),
 };
 
-// ===================== ROTATION (DIRECTIONAL FACING) =====================
 const TWO_PI = Math.PI * 2;
-// Angle (atan2 convention) that unit art faces at rotation=0. Most top-down
-// character sprites idle facing the camera ("south"), which is +PI/2 in
-// atan2(dy,dx) terms. If your sprite sheet instead faces up/right by default,
-// this is the one constant to flip (-PI/2 for "faces up", 0 for "faces right").
-const FACING_REST_ANGLE = Math.PI / 2;
 
-// Shortest-path angle interpolation — avoids spinning the long way around
-// when crossing the -PI/PI wraparound boundary.
-function _lerpAngle(from, to, t) {
-    let diff = (to - from) % TWO_PI;
-    if (diff > Math.PI) diff -= TWO_PI;
-    else if (diff < -Math.PI) diff += TWO_PI;
-    return from + diff * t;
+// ===================== MELEE ENGAGEMENT HELPERS =====================
+// Per-frame count of melee attackers per raider (cleared from main.js's update
+// loop). Soldiers/knights prefer the nearest raider that isn't already piled on.
+const _combatTargetCounts = new Map();
+
+const _leashScratch = [];
+// Defend mode: only raiders within COMBAT_BALANCE.defendLeashTiles of the rally
+// point are engaged, so the army holds the walls instead of scattering across
+// the map after every raider. Attack mode (and no-rally towns) engage anything.
+function _selectEngageableRaiders(activeRaiders) {
+    if (_combatMode !== 'defend' || activeRaiders.length === 0) return activeRaiders;
+    const rally = window._defendRally;
+    if (!rally) return activeRaiders;
+    const CB = window.COMBAT_BALANCE;
+    const leash = (CB?.defendLeashTiles ?? 10) * TILE_SIZE;
+    const leashSq = leash * leash;
+    const rx = rally.tx * TILE_SIZE + TILE_SIZE / 2;
+    const ry = rally.ty * TILE_SIZE + TILE_SIZE / 2;
+    _leashScratch.length = 0;
+    for (const r of activeRaiders) {
+        const dx = r.x - rx, dy = r.y - ry;
+        if (dx * dx + dy * dy <= leashSq) _leashScratch.push(r);
+    }
+    return _leashScratch;
 }
 
-// Smoothly turns unit.rotation to face travel direction (dx, dy). Call once
-// per frame with the current movement delta; no-ops when nearly stationary
-// so units keep their last facing instead of snapping to 0 at rest.
-function _updateFacing(unit, dx, dy, dtSec, turnRate = 10) {
-    if (dx * dx + dy * dy < 0.0001) return;
-    const target = Math.atan2(dy, dx) - FACING_REST_ANGLE;
-    unit.rotation = _lerpAngle(unit.rotation ?? 0, target, Math.min(1, dtSec * turnRate));
+// Nearest raider with fewer than maxMeleeAttackersPerTarget attackers; falls
+// back to the plain nearest when everything is saturated.
+function _pickMeleeTarget(unit, candidates) {
+    const cap = window.COMBAT_BALANCE?.maxMeleeAttackersPerTarget ?? 3;
+    let bestUnder = null, bestUnderSq = Infinity;
+    let bestAny = null, bestAnySq = Infinity;
+    for (const r of candidates) {
+        const dx = r.x - unit.x, dy = r.y - unit.y;
+        const dSq = dx * dx + dy * dy;
+        if (dSq < bestAnySq) { bestAny = r; bestAnySq = dSq; }
+        if (dSq < bestUnderSq && (_combatTargetCounts.get(r) || 0) < cap) { bestUnder = r; bestUnderSq = dSq; }
+    }
+    const chosen = bestUnder ?? bestAny;
+    if (chosen) _combatTargetCounts.set(chosen, (_combatTargetCounts.get(chosen) || 0) + 1);
+    return chosen;
 }
 
 // ===================== SEPARATION (ANTI-STACKING) =====================
@@ -278,7 +294,6 @@ export class Citizen {
         this.targetX = x;
         this.targetY = y;
         this.speed = 1.5;
-        this.rotation = 0;
         this.state = 'idle';
         this._idleTimer = 0;
         this._idleWait = this._randomIdleWait();
@@ -485,8 +500,8 @@ export class Citizen {
         return false;
     }
 
-    update(dt, grid) {
-        const dtSec = dt / 1000;
+    // dtSec is SECONDS — same convention as Soldier/Archer/Knight/Raider.update.
+    update(dtSec, grid) {
         this._updateVisualMotion(dtSec);
         // Hiding citizens are intentionally clustered inside a house during a
         // raid — leave them stacked rather than nudging them into view.
@@ -497,7 +512,6 @@ export class Citizen {
             const t = Math.min(1.0, this._moveTimer / (this.speed / _sm.citizenSpeedMult));
             this.x = this._moveFromX + (this.targetX - this._moveFromX) * t;
             this.y = this._moveFromY + (this.targetY - this._moveFromY) * t;
-            _updateFacing(this, this.targetX - this._moveFromX, this.targetY - this._moveFromY, dtSec);
             if (t >= 1.0) {
                 this.x = this.targetX;
                 this.y = this.targetY;
@@ -638,9 +652,11 @@ export class Citizen {
             this._phaseTimer += dtSec;
             if (this._phaseTimer >= 2.0) {
                 const s = grid.structures[this._nodeTY]?.[this._nodeTX];
+                this._carrying = false;
                 if (s && s.def.key === 'obstacle_tree') {
                     grid.structures[this._nodeTY][this._nodeTX] = null;
                     window.patchStaticCache?.(this._nodeTX, this._nodeTY);
+                    this._carrying = true; // an actual tree was felled
                 }
                 playChopSFX();
                 this._phase = 'returning';
@@ -652,6 +668,10 @@ export class Citizen {
                 let woodBonus = 10 * SEASON_MODIFIERS[SEASONS.indexOf(gameState.season)].woodYieldMult;
                 woodBonus += getAdjacencyBonus(this._workTX, this._workTY, 'lumberyard');
                 if (_tier2Upgrades[lumberKey]) woodBonus += 2;
+                // No tree actually harvested → reduced "gleaning" yield, so
+                // real nodes matter but a deforested map doesn't zero the economy.
+                if (!this._carrying) woodBonus *= window.PRODUCTION_BALANCE?.gleanYieldMult ?? 0.4;
+                this._carrying = false;
                 gameState.wood += woodBonus;
                 spawnFloat(this.x, this.y - 10, `+${Math.round(woodBonus)} Wood`, '#a06428', 1.0);
                 // Proxy marks UI dirty on gameState.wood write; flushUI() syncs next frame
@@ -706,8 +726,10 @@ export class Citizen {
             this._phaseTimer += dtSec;
             if (this._phaseTimer >= 2.0) {
                 const s = grid.structures[this._nodeTY]?.[this._nodeTX];
+                this._carrying = false;
                 if (s && s.def.key === nodeKey) {
                     s.hp = (s.hp ?? 5) - 1;
+                    this._carrying = true; // an actual deposit was worked
                     if (s.hp <= 0) {
                         grid.structures[this._nodeTY][this._nodeTX] = null;
                         window.patchStaticCache?.(this._nodeTX, this._nodeTY);
@@ -722,7 +744,10 @@ export class Citizen {
                 const mineKey = `${this._workTX},${this._workTY}`;
                 const adjBonus = getAdjacencyBonus(this._workTX, this._workTY, adjacencyType);
                 const t2Bonus = (resourceKey === 'iron' && _tier2Upgrades[mineKey]) ? 2 : 0;
-                const mineYield = 10 + adjBonus + t2Bonus;
+                // Reduced "gleaning" yield when no deposit was actually worked.
+                const gleanMult = this._carrying ? 1 : (window.PRODUCTION_BALANCE?.gleanYieldMult ?? 0.4);
+                this._carrying = false;
+                const mineYield = (10 + adjBonus + t2Bonus) * gleanMult;
                 gameState[resourceKey] = (gameState[resourceKey] ?? 0) + mineYield;
                 const floatColor = resourceKey === 'stone' ? '#aaaaaa' : '#b0b8c8';
                 const floatLabel = resourceKey === 'stone' ? `+${Math.round(mineYield)} Stone` : `+${Math.round(mineYield)} Iron`;
@@ -762,6 +787,14 @@ export class Citizen {
             this._phaseTimer += dtSec;
             if (this._phaseTimer >= 1.5) {
                 this._phaseTimer = 0;
+                // Soldiers fight back: each swing has a chance the rebel is
+                // subdued and calms down, so a happiness dip can no longer
+                // silently delete an army that never defends itself.
+                if (Math.random() < 0.35) {
+                    spawnFloat(this.x, this.y - 12, 'Subdued', '#88aacc', 0.9);
+                    this.job = 'idle'; this._phase = 'idle'; this._rebelTarget = null;
+                    return;
+                }
                 sol.hp -= 15;
                 spawnFloat(sol.x, sol.y - 12, '-15', '#ff4444', 0.8);
                 if (sol.hp <= 0) {
@@ -818,7 +851,6 @@ export class Soldier {
         this.targetX = x;
         this.targetY = y;
         this.speed = 1.5;
-        this.rotation = 0;
         this._moveFromX = x;
         this._moveFromY = y;
         this._moveTimer = 0;
@@ -895,17 +927,12 @@ export class Soldier {
 
     update(dtSec, grid, activeRaiders) {
         _clampToTerritory(this);
-        // Soldiers engage any active raiders regardless of the attack/defend
-        // toggle — _combatMode now only decides where they patrol/rally when
-        // there's nothing to fight (see the idle branch below). _clampToTerritory
-        // still bounds the chase in both modes, same as before.
-        if (activeRaiders.length > 0) {
-            let closest = null, closestDistSq = Infinity;
-            for (const r of activeRaiders) {
-                const dx = r.x - this.x, dy = r.y - this.y;
-                const dSq = dx * dx + dy * dy;
-                if (dSq < closestDistSq) { closest = r; closestDistSq = dSq; }
-            }
+        // Attack mode: engage any active raider. Defend mode: only raiders
+        // inside the rally leash are engaged — the army holds the walls and
+        // lets towers/archers handle distant stragglers.
+        const engageable = _selectEngageableRaiders(activeRaiders);
+        if (engageable.length > 0) {
+            const closest = _pickMeleeTarget(this, engageable);
             if (closest) {
                 this._chaseRepathTimer += dtSec;
                 if (this._chaseTarget !== closest || this._chaseRepathTimer >= 1.5 || this._chaseIndex >= this._chasePath.length) {
@@ -924,15 +951,10 @@ export class Soldier {
                     const wpX = tx * TILE_SIZE + TILE_SIZE / 2, wpY = ty * TILE_SIZE + TILE_SIZE / 2;
                     const d = Math.hypot(wpX - this.x, wpY - this.y);
                     const spd = TILE_SIZE * 1.5 * dtSec;
-                    _updateFacing(this, wpX - this.x, wpY - this.y, dtSec);
                     if (d <= spd) { this.x = wpX; this.y = wpY; this._chaseIndex++; }
                     else { this.x += (wpX - this.x) / d * spd; this.y += (wpY - this.y) / d * spd; }
                     applySeparation(this, dtSec, isFriendlyWalkable);
                     _clampToTerritory(this);
-                } else {
-                    // Standing at the final waypoint (e.g. melee range) — still
-                    // face the target so units don't stare off at an old heading.
-                    _updateFacing(this, closest.x - this.x, closest.y - this.y, dtSec);
                 }
             }
             return;
@@ -960,7 +982,6 @@ export class Archer {
         this.x = x; this.y = y;
         this.targetX = x; this.targetY = y;
         this.hp = 80; this.maxHp = 80;
-        this.rotation = 0;
         this._moveFromX = x; this._moveFromY = y;
         this._moveTimer = 0; this.speed = 1.5;
         this.state = 'seeking_post';
@@ -1019,7 +1040,9 @@ export class Archer {
             }
             this._fireTimer = Math.max(0, this._fireTimer - dtSec);
             if (this._fireTimer <= 0 && activeRaiders.length > 0) {
-                const limitSq = (12 * TILE_SIZE) * (12 * TILE_SIZE);
+                const CB = window.COMBAT_BALANCE?.archer;
+                const range = (CB?.rangeTiles ?? 12) * TILE_SIZE;
+                const limitSq = range * range;
                 let closest = null, cdSq = Infinity;
                 for (const r of activeRaiders) {
                     const dx = r.x - this.x, dy = r.y - this.y;
@@ -1027,10 +1050,9 @@ export class Archer {
                     if (dSq <= limitSq && dSq < cdSq) { closest = r; cdSq = dSq; }
                 }
                 if (closest) {
-                    this._fireTimer = 1.5;
-                    const dmg = gameState.upgrades?.steel_bows ? 25 : 20;
+                    this._fireTimer = CB?.fireIntervalSec ?? 1.5;
+                    const dmg = gameState.upgrades?.steel_bows ? (CB?.steelBowsDamage ?? 25) : (CB?.damage ?? 20);
                     fireArrow(this.x, this.y, closest, dmg);
-                    _updateFacing(this, closest.x - this.x, closest.y - this.y, dtSec);
                 }
             }
             applySeparation(this, dtSec, isFriendlyWalkable);
@@ -1124,9 +1146,18 @@ export class Archer {
             this.hp = Math.min(this.maxHp, this.hp + (gameState.upgrades?.field_medicine ? 4 : 2) * dtSec); // heal at post
             this._fireTimer = Math.max(0, this._fireTimer - dtSec);
             if (this._fireTimer <= 0 && activeRaiders.length > 0) {
-                const px = this._postTX * TILE_SIZE + TILE_SIZE / 2;
-                const py = this._postTY * TILE_SIZE + TILE_SIZE / 2;
-                const limitSq = (12 * TILE_SIZE) * (12 * TILE_SIZE);
+                // Arrows come from the manned post — but only if the archer's
+                // body actually made it there. A failed path used to leave the
+                // archer far away while arrows spawned from empty wall.
+                let px = this._postTX * TILE_SIZE + TILE_SIZE / 2;
+                let py = this._postTY * TILE_SIZE + TILE_SIZE / 2;
+                const postDX = px - this.x, postDY = py - this.y;
+                if (postDX * postDX + postDY * postDY > (2 * TILE_SIZE) * (2 * TILE_SIZE)) {
+                    px = this.x; py = this.y;
+                }
+                const CB = window.COMBAT_BALANCE?.archer;
+                const range = (CB?.rangeTiles ?? 12) * TILE_SIZE;
+                const limitSq = range * range;
                 let closest = null, cdSq = Infinity;
                 for (const r of activeRaiders) {
                     const dx = r.x - px, dy = r.y - py;
@@ -1134,10 +1165,9 @@ export class Archer {
                     if (dSq <= limitSq && dSq < cdSq) { closest = r; cdSq = dSq; }
                 }
                 if (closest) {
-                    this._fireTimer = 1.5;
-                    const dmg = gameState.upgrades?.steel_bows ? 25 : 20;
+                    this._fireTimer = CB?.fireIntervalSec ?? 1.5;
+                    const dmg = gameState.upgrades?.steel_bows ? (CB?.steelBowsDamage ?? 25) : (CB?.damage ?? 20);
                     fireArrow(px, py, closest, dmg);
-                    _updateFacing(this, closest.x - px, closest.y - py, dtSec);
                 }
             }
         }
@@ -1153,7 +1183,6 @@ export class Knight {
         this.maxHp = (gameState.upgrades && gameState.upgrades.heavy_armor) ? 200 : 150;
         this.hp = this.maxHp;
         this.speed = 1.2;
-        this.rotation = 0;
         this.targetX = x; this.targetY = y;
         this._moveFromX = x; this._moveFromY = y;
         this._moveTimer = 0;
@@ -1170,17 +1199,11 @@ export class Knight {
 
     update(dtSec, grid, activeRaiders) {
         _clampToTerritory(this);
-        // Knights engage any active raiders regardless of the attack/defend
-        // toggle — _combatMode now only decides where they patrol/rally when
-        // there's nothing to fight (see the idle branch below). _clampToTerritory
-        // still bounds the chase in both modes, same as before.
-        if (activeRaiders.length > 0) {
-            let closest = null, cdSq = Infinity;
-            for (const r of activeRaiders) {
-                const dx = r.x - this.x, dy = r.y - this.y;
-                const dSq = dx * dx + dy * dy;
-                if (dSq < cdSq) { closest = r; cdSq = dSq; }
-            }
+        // Attack mode: engage any active raider. Defend mode: leash to rally
+        // (see _selectEngageableRaiders) so knights hold position with the line.
+        const engageable = _selectEngageableRaiders(activeRaiders);
+        if (engageable.length > 0) {
+            const closest = _pickMeleeTarget(this, engageable);
             if (closest) {
                 this._chaseRepathTimer += dtSec;
                 if (this._chaseTarget !== closest || this._chaseRepathTimer >= 1.5 || this._chaseIndex >= this._chasePath.length) {
@@ -1199,13 +1222,10 @@ export class Knight {
                     const wpX = tx * TILE_SIZE + TILE_SIZE / 2, wpY = ty * TILE_SIZE + TILE_SIZE / 2;
                     const d = Math.hypot(wpX - this.x, wpY - this.y);
                     const spd = TILE_SIZE * 1.2 * dtSec;
-                    _updateFacing(this, wpX - this.x, wpY - this.y, dtSec);
                     if (d <= spd) { this.x = wpX; this.y = wpY; this._chaseIndex++; }
                     else { this.x += (wpX - this.x) / d * spd; this.y += (wpY - this.y) / d * spd; }
                     applySeparation(this, dtSec, isFriendlyWalkable);
                     _clampToTerritory(this);
-                } else {
-                    _updateFacing(this, closest.x - this.x, closest.y - this.y, dtSec);
                 }
             }
             return;
@@ -1315,7 +1335,6 @@ export class Raider {
         this.hp = type === 'siege' ? 150 : 100;
         this._alpha = 1.0;
         this._rotation = 0; // victory-spin animation (main.js updateEffects) — do not repurpose
-        this.rotation = 0;  // directional facing while walking (this file)
         this._victoryTimer = 0;
         this._defeatTimer = 0;
         this._defeatFromX = x; this._defeatFromY = y;
@@ -1559,7 +1578,9 @@ export class Raider {
                     // Deal HP damage; destroy only when HP exhausted
                     const maxHp = getMaxHP(s.def.key);
                     const _isWallGate = s.def.key === 'wall' || s.def.key === 'gate';
-                    s.hp = (s.hp ?? maxHp) - (this.type === 'siege' && _isWallGate ? 75 : 50);
+                    const RB = window.COMBAT_BALANCE?.raider;
+                    s.hp = (s.hp ?? maxHp) - (this.type === 'siege' && _isWallGate
+                        ? (RB?.siegeWallDamage ?? 75) : (RB?.buildingDamage ?? 50));
                     const p = getPooledParticle();
                     p.x = parentTX * TILE_SIZE + TILE_SIZE / 2; p.y = parentTY * TILE_SIZE + TILE_SIZE / 2; p.type = 'slash'; p.timer = 0; p.duration = 0.8; p.alpha = 1.0;
                     particles.push(p);
@@ -1598,14 +1619,6 @@ export class Raider {
         if (this._repathTimer > 0) { this._repathTimer -= dtSec; return; }
 
         if (this._attacking) {
-            // Face whatever is being hit rather than staring off at the old
-            // approach heading for the whole attack duration.
-            if (this._target?.type === 'citizen') {
-                _updateFacing(this, this._target.citizen.x - this.x, this._target.citizen.y - this.y, dtSec);
-            } else if (this._target?.type === 'building') {
-                _updateFacing(this, this._target.tx * TILE_SIZE + TILE_SIZE / 2 - this.x,
-                                     this._target.ty * TILE_SIZE + TILE_SIZE / 2 - this.y, dtSec);
-            }
             applySeparation(this, dtSec, isRaiderWalkable);
             this._attackTimer += dtSec;
             if (this._attackTimer >= this._attackDuration) this._completeAttack();
@@ -1618,7 +1631,6 @@ export class Raider {
             const ddx = this.x - cx, ddy = this.y - cy;
             const dist = Math.hypot(ddx, ddy) || 1;
             const spd = TILE_SIZE / this._moveDuration;
-            _updateFacing(this, ddx, ddy, dtSec);
             this.x += (ddx / dist) * spd * dtSec;
             this.y += (ddy / dist) * spd * dtSec;
             const W = grid.width * TILE_SIZE, H = grid.height * TILE_SIZE;
@@ -1644,7 +1656,6 @@ export class Raider {
             const t = Math.min(1.0, this._moveTimer / this._moveDuration);
             this.x = this._moveFromX + (this.targetX - this._moveFromX) * t;
             this.y = this._moveFromY + (this.targetY - this._moveFromY) * t;
-            _updateFacing(this, this.targetX - this._moveFromX, this.targetY - this._moveFromY, dtSec);
             applySeparation(this, dtSec, isRaiderWalkable);
             if (t >= 1.0) {
                 this.x = this.targetX;
@@ -1683,5 +1694,5 @@ export class Raider {
 // Bind to window for global legacy namespace access
 Object.assign(window, {
     Citizen, Soldier, Archer, Knight, MerchantNPC, Raider, _archerDefenseContext,
-    rebuildSeparationGrid
+    rebuildSeparationGrid, _combatTargetCounts, _getDefendRallyTile
 });

@@ -7,12 +7,11 @@ import { Citizen, Soldier, Archer, Knight, MerchantNPC, Raider } from '../entiti
 export const TILE_SIZE = 32;
 export const GRID_WIDTH = 64;
 export const GRID_HEIGHT = 64;
-export const MAX_CITIZEN_RENDER = 30;
 
 export const BUILDINGS = {
     house:          { key: 'house',          label: 'HOUSE',         cost: 50,  woodCost: 0,  ironCost: 0,  stoneCost: 0,  housing: 4,  defense: 0,  food: 0,  assetKey: 'building_house',         color: '#d9534f', maxWorkers: 0 },
     tower:          { key: 'tower',          label: 'TOWER',         cost: 150, woodCost: 0,  ironCost: 0,  stoneCost: 0,  housing: 0,  defense: 10, food: 0,  assetKey: 'building_tower',         color: '#0275d8', maxWorkers: 0 },
-    wall:           { key: 'wall',           label: 'WALL',          cost: 5,   woodCost: 0,  ironCost: 0,  stoneCost: 0,  housing: 0,  defense: 2,  food: 0,  assetKey: 'building_wall',          color: '#777777', maxWorkers: 0 },
+    wall:           { key: 'wall',           label: 'WALL',          cost: 5,   woodCost: 2,  ironCost: 0,  stoneCost: 0,  housing: 0,  defense: 2,  food: 0,  assetKey: 'building_wall',          color: '#777777', maxWorkers: 0 },
     barracks:       { key: 'barracks',       label: 'BARRACKS',      cost: 200, woodCost: 0,  ironCost: 0,  stoneCost: 0,  housing: 0,  defense: 10, food: 0,  assetKey: 'building_barracks',      color: '#6d4c41', maxWorkers: 0 },
     farm:           { key: 'farm',           label: 'FARM',          cost: 80,  woodCost: 0,  ironCost: 0,  stoneCost: 0,  housing: 0,  defense: 0,  food: 10, assetKey: 'building_farm',          color: '#f0ad4e', maxWorkers: 3 },
     lumberyard:     { key: 'lumberyard',     label: 'LUMBER YARD',   cost: 60,  woodCost: 0,  ironCost: 0,  stoneCost: 0,  housing: 0,  defense: 0,  food: 0,  assetKey: 'building_lumberyard',    color: '#8B6914', maxWorkers: 3 },
@@ -75,9 +74,12 @@ export const FOOD_CAP_BASE = 200;
 export const FOOD_CAP_PER_GRANARY = 200;
 export const EMIGRATION_INTERVAL = 10.0;
 export const AUTOSAVE_INTERVAL = 10.0;
-export const SAVE_KEY = 'pixel_dominion_save';
+export const SAVE_KEY = 'pixel_dominion_save';               // rolling autosave slot
+export const MANUAL_SAVE_KEY = 'pixel_dominion_save_manual'; // player-initiated slot (survives autosaves)
 export const RAID_DURATION = 180;
-export const RAID_ACTIVE_TIMEOUT = 90;
+// Failsafe: if a raid is still unresolved after this long, all remaining
+// walkers are force-retreated so a stuck raider can never stall the game.
+export const RAID_ACTIVE_TIMEOUT = 240;
 // Smooth ~1.5× growth per wave (previously spiked 6→15 and 35→60)
 export const RAID_WAVE_SIZES = Object.freeze([3, 7, 12, 20, 32, 48, 70, 100, 140, 190]);
 export const FINAL_RAID_WAVE = RAID_WAVE_SIZES.length;
@@ -121,6 +123,29 @@ export const PRODUCTION_BALANCE = Object.freeze({
     farmCycleSec: 2.0,
     farmPassiveFoodPerCycle: 2.25,
     farmBaseFoodPerCycle: 13.5,
+    // Yield multiplier when a woodcutter/miner returns without having harvested
+    // an actual node (no trees / deposits left in range) — "gleaning" keeps the
+    // economy alive but makes real nodes clearly better.
+    gleanYieldMult: 0.4,
+    // Approximate gather round-trip used for the stats-overlay rate estimate.
+    gatherTripSecEstimate: 8,
+});
+
+// Combat tuning — single source of truth for damage/range numbers that were
+// previously inline literals scattered across entities.js and main.js.
+export const COMBAT_BALANCE = Object.freeze({
+    soldier:  Object.freeze({ meleeDps: 15 }),
+    knight:   Object.freeze({ meleeDps: 20, damageTakenMult: 0.5 }),
+    archer:   Object.freeze({ damage: 20, steelBowsDamage: 25, rangeTiles: 12, fireIntervalSec: 1.5 }),
+    tower:    Object.freeze({ damage: 25, tier2Damage: 30, rangeTiles: 8, tier2RangeTiles: 10, fireIntervalSec: 1.0 }),
+    ballista: Object.freeze({ fireIntervalSec: 8.0 }),
+    raider:   Object.freeze({ meleeDps: 15, buildingDamage: 50, siegeWallDamage: 75, gateBreachDps: 10 }),
+    // Defend mode: soldiers/knights only engage raiders within this many tiles
+    // of the rally point; anything further is left to towers/archers.
+    defendLeashTiles: 10,
+    // Melee target distribution: prefer the nearest raider with fewer than this
+    // many attackers already on it (prevents 30 soldiers piling on one target).
+    maxMeleeAttackersPerTarget: 3,
 });
 
 // Object Pools to mitigate Garbage Collection sweeps
@@ -180,13 +205,13 @@ export function spawnParticle(x, y, type, duration = 0.4, text = null, color = n
 
 // Bind constants to window
 Object.assign(window, {
-    TILE_SIZE, GRID_WIDTH, GRID_HEIGHT, MAX_CITIZEN_RENDER, BUILDINGS, TREE_DEF,
+    TILE_SIZE, GRID_WIDTH, GRID_HEIGHT, BUILDINGS, TREE_DEF,
     TREE_SPAWN_CHANCE, ROAD_DEF, RUBBLE_DEF, STONE_DEP_DEF, IRON_VEIN_DEF,
     STONE_SPAWN_CHANCE, IRON_SPAWN_CHANCE, ROAD_COST, ALL_DEFS, SEASON_MODIFIERS, SEASONS,
     DAY_PHASES, DAY_DURATION, SEASON_DURATION, TAX_INTERVAL, FOOD_CAP_BASE,
-    FOOD_CAP_PER_GRANARY, EMIGRATION_INTERVAL, AUTOSAVE_INTERVAL, SAVE_KEY, RAID_DURATION,
+    FOOD_CAP_PER_GRANARY, EMIGRATION_INTERVAL, AUTOSAVE_INTERVAL, SAVE_KEY, MANUAL_SAVE_KEY, RAID_DURATION,
     RAID_ACTIVE_TIMEOUT, RAID_WAVE_SIZES, FINAL_RAID_WAVE,
-    TIER2_UPGRADES, UNIT_BALANCE, ECONOMY_BALANCE, PRODUCTION_BALANCE,
+    TIER2_UPGRADES, UNIT_BALANCE, ECONOMY_BALANCE, PRODUCTION_BALANCE, COMBAT_BALANCE,
     DIFFICULTY_PRESETS, DEFAULT_DIFFICULTY_KEY,
     PROJECTILE_POOL, PARTICLE_POOL, VISUAL_PROJECTILE_POOL, getPooledProjectile, releaseProjectile,
     getPooledParticle, releaseParticle, getPooledVisualProjectile, releaseVisualProjectile, spawnParticle
@@ -220,6 +245,8 @@ const _rawGameState = {
     raidersDefeated: 0,
     housesBuilt: 0,
     farmsBuilt: 0,
+    endless: false,          // player chose CONTINUE REIGN after victory — raids keep scaling
+    victoryAchieved: false,  // guards against re-triggering the victory modal every frame
 };
 
 export const STATE_SCHEMA = Object.freeze({
@@ -232,7 +259,7 @@ export const STATE_SCHEMA = Object.freeze({
     ]),
     progression: Object.freeze([
         'day', 'season', 'upgrades', 'activeResearch', 'raidersDefeated',
-        'housesBuilt', 'farmsBuilt',
+        'housesBuilt', 'farmsBuilt', 'endless', 'victoryAchieved',
     ]),
     // Derived values are rebuilt from grid/entities and should not be treated as save owners.
     derived: Object.freeze([
@@ -627,9 +654,11 @@ export function migrateSaveData(data) {
     return data;
 }
 
-export function saveGame() {
+export function saveGame(slotKey = SAVE_KEY) {
     const data = {
         version: SAVE_VERSION,
+        endless: gameState.endless || false,
+        victoryAchieved: gameState.victoryAchieved || false,
         gold: gameState.gold, housing: gameState.housing, defense: gameState.defense,
         population: gameState.population, food: gameState.food, happiness: gameState.happiness,
         difficulty: gameState.difficulty,
@@ -683,8 +712,8 @@ export function saveGame() {
             }
         }
     }
-    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-    console.log('[Pixel Dominion] Game saved.');
+    localStorage.setItem(slotKey, JSON.stringify(data));
+    console.log(`[Pixel Dominion] Game saved (${slotKey === MANUAL_SAVE_KEY ? 'manual slot' : 'autosave slot'}).`);
 }
 window.saveGame = saveGame;
 
@@ -696,8 +725,8 @@ export function flashAutosave() {
 }
 window.flashAutosave = flashAutosave;
 
-export function loadGame() {
-    const raw = localStorage.getItem(SAVE_KEY);
+export function loadGame(slotKey = SAVE_KEY) {
+    const raw = localStorage.getItem(slotKey);
     if (!raw) { alert('No save found!'); return false; }
     let parsed;
     try {
@@ -844,6 +873,8 @@ export function loadGame() {
     }, d.upgrades ?? {});
     gameState.activeResearch = d.activeResearch ?? null;
     gameState.raidersDefeated = d.raidersDefeated ?? 0;
+    gameState.endless = d.endless ?? false;
+    gameState.victoryAchieved = d.victoryAchieved ?? false;
     setTier2Upgrades(d.tier2Upgrades ? Object.assign({}, d.tier2Upgrades) : {});
     
     // Restore raw sub-second timers
@@ -910,6 +941,7 @@ window.loadGame = loadGame;
 
 export function resetGame() {
     localStorage.removeItem(SAVE_KEY);
+    localStorage.removeItem(MANUAL_SAVE_KEY);
     location.reload();
 }
 window.resetGame = resetGame;

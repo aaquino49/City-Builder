@@ -270,17 +270,12 @@ export class GameGrid {
             const drawX = typeof c.renderX === 'function' ? c.renderX() : c.x;
             const drawY = typeof c.renderY === 'function' ? c.renderY() : c.y;
             if (drawX < viewMinX || drawX > viewMaxX || drawY < viewMinY || drawY > viewMaxY) continue;
-            const rot = c.rotation || 0;
             if (c.job === 'rebel') {
                 // Red tint for rebels
                 ctx.globalAlpha = 0.85;
                 if (citizenAsset) {
                     ctx.globalCompositeOperation = 'source-over';
-                    ctx.save();
-                    ctx.translate(drawX, drawY);
-                    ctx.rotate(rot);
-                    ctx.drawImage(citizenAsset, -8, -8, 16, 16);
-                    ctx.restore();
+                    ctx.drawImage(citizenAsset, drawX - 8, drawY - 8, 16, 16);
                     ctx.fillStyle = 'rgba(200,30,30,0.55)';
                     ctx.beginPath(); ctx.arc(drawX, drawY, 8, 0, Math.PI * 2); ctx.fill();
                 } else {
@@ -289,11 +284,7 @@ export class GameGrid {
                 }
                 ctx.globalAlpha = 1.0;
             } else if (citizenAsset) {
-                ctx.save();
-                ctx.translate(drawX, drawY);
-                ctx.rotate(rot);
-                ctx.drawImage(citizenAsset, -8, -8, 16, 16);
-                ctx.restore();
+                ctx.drawImage(citizenAsset, drawX - 8, drawY - 8, 16, 16);
             } else {
                 ctx.fillStyle = '#ffdd57';
                 ctx.beginPath();
@@ -617,6 +608,12 @@ function openBuildingPanel(tx, ty) {
 
     const statsLines = [];
     if (s.hp !== undefined) statsLines.push(`HP: ${Math.ceil(s.hp)} / ${getMaxHP(bKey)}`);
+    // Staffing readout for workplaces — answers "why is this farm idle?"
+    const _panelJobFor = { farm: 'farmer', lumberyard: 'woodcutter', quarry: 'stone_miner', mine: 'iron_miner' }[bKey];
+    if (_panelJobFor && s.def.maxWorkers) {
+        const workerCount = citizens.filter(c => c.job === _panelJobFor && c._workTX === tx && c._workTY === ty).length;
+        statsLines.push(`Workers: ${workerCount} / ${s.def.maxWorkers}`);
+    }
     if (bKey === 'farm') {
         const passive = window.PRODUCTION_BALANCE?.farmPassiveFoodPerCycle ?? 1;
         const cycleSec = window.PRODUCTION_BALANCE?.farmCycleSec ?? 2.0;
@@ -647,7 +644,8 @@ function openBuildingPanel(tx, ty) {
     } else if (bKey === 'granary') {
         statsLines.push(`Food cap: +${isT2 ? 350 : 200}`);
     } else if (bKey === 'barracks') {
-        statsLines.push(`Trains soldiers (40G)`);
+        const solCost = Math.round((window.UNIT_BALANCE?.soldier?.goldCost ?? 40) * (window._soldierCostMult || 1));
+        statsLines.push(`Trains soldiers (${solCost}G)`);
         statsLines.push(`Soldier HP: ${isT2 ? 125 : 100}`);
     } else if (bKey === 'tower') {
         statsLines.push(`Range: ${isT2 ? 10 : 8} tiles`);
@@ -828,8 +826,11 @@ export function calculateCurrentScore() {
 }
 
 export function triggerVictory(reason = 'default') {
+    gameState.victoryAchieved = true; // guard: never re-trigger per frame
     window.setGameIsPaused(true);
     playVictorySFX();
+    // Victory offers CONTINUE REIGN (endless mode)
+    document.getElementById('game-over-continue')?.classList.remove('hidden');
     
     const days = gameState.day || 1;
     const citizenCount = citizens.length;
@@ -894,6 +895,8 @@ export function triggerVictory(reason = 'default') {
 function triggerDefeat() {
     window.setGameIsPaused(true);
     playDefeatSFX();
+    // No continuing from a total collapse
+    document.getElementById('game-over-continue')?.classList.add('hidden');
     
     const days = gameState.day || 1;
     const raidersCount = gameState.raidersDefeated || 0;
@@ -960,8 +963,11 @@ function _hudClass(id, cls, on) {
 
 export function updateRaidHUD() {
     const finalRaidWave = window.FINAL_RAID_WAVE ?? 10;
-    const waveNum = Math.min((window.raidCount ?? 0) + 1, finalRaidWave);
-    _hudText('raid-wave-indicator', `WAVE ${waveNum}/${finalRaidWave}${waveNum === finalRaidWave ? ' FINAL' : ''}`);
+    const endless = !!window.gameState?.endless;
+    const waveNum = endless ? (window.raidCount ?? 0) + 1 : Math.min((window.raidCount ?? 0) + 1, finalRaidWave);
+    _hudText('raid-wave-indicator', endless
+        ? `WAVE ${waveNum}/∞`
+        : `WAVE ${waveNum}/${finalRaidWave}${waveNum === finalRaidWave ? ' FINAL' : ''}`);
     if (raidActive) {
         _hudText('res-raid-timer', formatTime(raidActiveTimer));
         _hudText('raid-eyebrow', '⚔ RAID ⚔');
@@ -1121,7 +1127,14 @@ function renderBuildMenu(tab) {
     });
     itemsEl.innerHTML = visible.map(item => {
         const def = BUILDINGS[item.key];
-        const specialCosts = { clear: [10,0,0,0], clear_rubble: [15,0,0,0], road: [ROAD_COST,0,0,0], demolish: [0,0,0,0], train_soldier: [40,0,0,0], train_archer: [40,0,0,0], train_knight: [60,0,20,0] };
+        const UB = window.UNIT_BALANCE;
+        const soldierCost = Math.round((UB?.soldier?.goldCost ?? 40) * (window._soldierCostMult || 1));
+        const specialCosts = {
+            clear: [10,0,0,0], clear_rubble: [15,0,0,0], road: [ROAD_COST,0,0,0], demolish: [0,0,0,0],
+            train_soldier: [soldierCost,0,0,0],
+            train_archer: [UB?.archer?.goldCost ?? 40,0,0,0],
+            train_knight: [UB?.knight?.goldCost ?? 60,0,UB?.knight?.ironCost ?? 20,0],
+        };
         let cost, woodCost, ironCost, stoneCost;
         if (def) {
             cost = getScaledCost(item.key); woodCost = def.woodCost || 0; ironCost = def.ironCost || 0; stoneCost = def.stoneCost || 0;
@@ -1192,15 +1205,27 @@ function updateBuildMenu() {
         if (tool === 'clear_rubble') { const c = gameState.gold < 15;  btn.disabled = c; btn.classList.toggle('disabled', c); return; }
         if (tool === 'road')         { const c = gameState.gold < ROAD_COST; btn.disabled = c; btn.classList.toggle('disabled', c); return; }
         if (tool === 'train_soldier') {
-            const c = !(gameState.gold >= 40 && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
+            // Cost reflects the diplomacy soldier-price penalty (_soldierCostMult);
+            // previously the button enabled at 40G while trainSoldier() silently
+            // required 60G during the penalty.
+            const solCost = Math.round((window.UNIT_BALANCE?.soldier?.goldCost ?? 40) * (window._soldierCostMult || 1));
+            const costsEl = btn.querySelector('.build-item-costs');
+            if (costsEl) {
+                const html = `<span class="build-cost-gold">◈ ${solCost}</span>`;
+                if (costsEl.dataset.cache !== html) { costsEl.dataset.cache = html; costsEl.innerHTML = html; }
+            }
+            const c = !(gameState.gold >= solCost && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
             btn.disabled = c; btn.classList.toggle('disabled', c); return;
         }
         if (tool === 'train_archer') {
-            const c = !(gameState.gold >= 40 && countBuildings('archery_range') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
+            const archCost = window.UNIT_BALANCE?.archer?.goldCost ?? 40;
+            const c = !(gameState.gold >= archCost && countBuildings('archery_range') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
             btn.disabled = c; btn.classList.toggle('disabled', c); return;
         }
         if (tool === 'train_knight') {
-            const c = !(gameState.gold >= 60 && gameState.iron >= 20 && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
+            const kGold = window.UNIT_BALANCE?.knight?.goldCost ?? 60;
+            const kIron = window.UNIT_BALANCE?.knight?.ironCost ?? 20;
+            const c = !(gameState.gold >= kGold && gameState.iron >= kIron && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
             btn.disabled = c; btn.classList.toggle('disabled', c); return;
         }
         const def = BUILDINGS[tool];
@@ -1397,13 +1422,9 @@ export function renderWorldOverlay() {
     let renderedSoldiers = 0;
     for (const sol of soldiers) {
         if (!isVisibleUnit(sol)) continue;
-        if (renderedSoldiers++ >= 120) break;
+        if (renderedSoldiers++ >= 200) break;
         if (soldierAsset) {
-            ctx.save();
-            ctx.translate(sol.x, sol.y);
-            ctx.rotate(sol.rotation || 0);
-            ctx.drawImage(soldierAsset, -8, -8, 16, 16);
-            ctx.restore();
+            ctx.drawImage(soldierAsset, sol.x - 8, sol.y - 8, 16, 16);
         } else {
             ctx.fillStyle = '#1a3a6a';
             ctx.beginPath(); ctx.arc(sol.x, sol.y, 6, 0, Math.PI * 2); ctx.fill();
@@ -1424,13 +1445,9 @@ export function renderWorldOverlay() {
     let renderedArchers = 0;
     for (const a of archers) {
         if (!isVisibleUnit(a)) continue;
-        if (renderedArchers++ >= 80) break;
+        if (renderedArchers++ >= 150) break;
         if (archerAsset) {
-            ctx.save();
-            ctx.translate(a.x, a.y);
-            ctx.rotate(a.rotation || 0);
-            ctx.drawImage(archerAsset, -8, -8, 16, 16);
-            ctx.restore();
+            ctx.drawImage(archerAsset, a.x - 8, a.y - 8, 16, 16);
         } else {
             ctx.fillStyle = '#00ccaa';
             ctx.beginPath(); ctx.arc(a.x, a.y, 5, 0, Math.PI * 2); ctx.fill();
@@ -1448,13 +1465,9 @@ export function renderWorldOverlay() {
     let renderedKnights = 0;
     for (const k of knights) {
         if (!isVisibleUnit(k)) continue;
-        if (renderedKnights++ >= 60) break;
+        if (renderedKnights++ >= 100) break;
         if (knightAsset) {
-            ctx.save();
-            ctx.translate(k.x, k.y);
-            ctx.rotate(k.rotation || 0);
-            ctx.drawImage(knightAsset, -8, -8, 16, 16);
-            ctx.restore();
+            ctx.drawImage(knightAsset, k.x - 8, k.y - 8, 16, 16);
         } else {
             ctx.fillStyle = '#cc8800';
             ctx.beginPath(); ctx.arc(k.x, k.y, 6, 0, Math.PI * 2); ctx.fill();
@@ -1508,6 +1521,34 @@ export function renderWorldOverlay() {
         ctx.globalAlpha = 1.0;
     }
 
+    // Unstaffed-workplace badges — a "!" over completed farms/lumberyards/
+    // quarries/mines with zero assigned workers (suppressed during raids when
+    // everyone is hiding, which would flag every workplace at once).
+    if (!raidActive && !_scoutPhase && window.jobfulStructures?.length) {
+        const _staffJobKeys = { farm: 'farmer', lumberyard: 'woodcutter', quarry: 'stone_miner', mine: 'iron_miner' };
+        const staffed = new Set();
+        for (const c of citizens) {
+            if (c._workTX >= 0 && _staffJobKeys[grid.structures[c._workTY]?.[c._workTX]?.def?.key] === c.job) {
+                staffed.add(c._workTX + ',' + c._workTY);
+            }
+        }
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 3 / zoom;
+        ctx.strokeStyle = '#000';
+        ctx.fillStyle = '#ffdd57';
+        for (const { tx, ty } of window.jobfulStructures) {
+            const s = grid.structures[ty]?.[tx];
+            if (!s || (s.progress ?? 1.0) < 1.0) continue;
+            if (staffed.has(tx + ',' + ty)) continue;
+            const bx = tx * TILE_SIZE + TILE_SIZE / 2;
+            const by = ty * TILE_SIZE - 2;
+            if (bx < viewMinX || bx > viewMaxX || by < viewMinY || by > viewMaxY) continue;
+            ctx.strokeText('!', bx, by);
+            ctx.fillText('!', bx, by);
+        }
+    }
+
     // Merchant NPC
     if (merchantNPC && merchantNPC.state !== 'done') {
         const merchantAsset = assets['npc_merchant'];
@@ -1524,18 +1565,17 @@ export function renderWorldOverlay() {
     let renderedRaiders = 0;
     for (const r of raiders) {
         if (!isVisibleUnit(r)) continue;
-        if (renderedRaiders++ >= 160) break;
+        // Cap covers the largest endless-mode wave so fighting units are never invisible
+        if (renderedRaiders++ >= 260) break;
         const raiderAsset = r.type === 'torch' ? assets['enemy_torch_raider']
                           : r.type === 'siege' ? assets['enemy_siege_raider']
                           : assets['enemy_raider'];
         ctx.save();
         ctx.globalAlpha = r._alpha;
         ctx.translate(r.x, r.y);
-        // Directional facing (r.rotation) plus the victory-defeat spin effect
-        // (r._rotation, only nonzero while state === 'victory') stack together
-        // so a raider keeps its last heading while spinning out.
-        const _raiderRot = (r.rotation || 0) + (r._rotation || 0);
-        if (_raiderRot) ctx.rotate(_raiderRot);
+        // Victory-defeat spin effect only (main.js updateEffects), so raiders
+        // keep their feet facing down while walking and only spin out on defeat.
+        if (r._rotation) ctx.rotate(r._rotation);
         if (r._attacking) {
             const pulse = 0.45 + 0.55 * Math.abs(Math.sin(Date.now() / 120));
             ctx.strokeStyle = `rgba(255, 80, 0, ${pulse})`;
@@ -1611,6 +1651,11 @@ function render() {
         }
     }
 
+    // Off-screen raid indicators — red arrows at the screen edge pointing toward
+    // raider groups the camera can't see, so the player always knows where the
+    // attack is coming from (the map is far larger than the viewport).
+    if (raidActive) _drawRaidDirectionArrows();
+
     // Snow overlay — screen-space, always updated but only drawn in Winter
     if (_snowParticles.length > 0) {
         const _drawSnow = SEASON_MODIFIERS[SEASONS.indexOf(gameState.season)].snowOverlay;
@@ -1635,6 +1680,69 @@ function render() {
     }
 }
 
+
+// Buckets off-screen walking raiders into 8 compass directions (relative to the
+// view center) and draws one edge arrow + count per occupied direction.
+const _raidArrowBuckets = new Array(8);
+function _drawRaidDirectionArrows() {
+    const { zoom } = camera;
+    const cw = canvas.width, ch = canvas.height;
+    const viewCX = camera.x + cw / (2 * zoom);
+    const viewCY = camera.y + ch / (2 * zoom);
+    _raidArrowBuckets.fill(0);
+    let anyOffscreen = false;
+    for (const r of raiders) {
+        if (r.state !== 'walking') continue;
+        const sx = (r.x - camera.x) * zoom;
+        const sy = (r.y - camera.y) * zoom;
+        if (sx >= 0 && sx <= cw && sy >= 0 && sy <= ch) continue; // visible
+        const ang = Math.atan2(r.y - viewCY, r.x - viewCX);
+        const bucket = ((Math.round(ang / (Math.PI / 4)) % 8) + 8) % 8;
+        _raidArrowBuckets[bucket]++;
+        anyOffscreen = true;
+    }
+    if (!anyOffscreen) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const inset = 42;
+    const halfW = cw / 2 - inset, halfH = ch / 2 - inset;
+    for (let b = 0; b < 8; b++) {
+        const count = _raidArrowBuckets[b];
+        if (!count) continue;
+        const ang = b * (Math.PI / 4);
+        const dirX = Math.cos(ang), dirY = Math.sin(ang);
+        // Ray-box intersection from screen center to the inset screen edge
+        const t = Math.min(
+            dirX !== 0 ? Math.abs(halfW / dirX) : Infinity,
+            dirY !== 0 ? Math.abs(halfH / dirY) : Infinity);
+        const px = cw / 2 + dirX * t;
+        const py = ch / 2 + dirY * t;
+        const pulse = 0.6 + 0.4 * Math.abs(Math.sin(Date.now() / 250));
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(ang);
+        ctx.globalAlpha = pulse;
+        ctx.fillStyle = '#dd2222';
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(14, 0);
+        ctx.lineTo(-8, -9);
+        ctx.lineTo(-8, 9);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.rotate(-ang);
+        ctx.globalAlpha = 1.0;
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 3;
+        ctx.strokeText(String(count), 0, -14);
+        ctx.fillText(String(count), 0, -14);
+        ctx.restore();
+    }
+}
 
 // Bind to window for global compatibility
 
@@ -1791,6 +1899,15 @@ export function rebuildStructureLists() {
         activeRubble, activeBarracks, activeArcheryRanges,
         buildingCounts, jobfulStructures, underConstruction
     });
+    // Prune fire timers of demolished/destroyed towers (covers every removal path)
+    if (window.towerFireTimers) {
+        const validTimerIds = new Set();
+        for (const { tx, ty } of activeTowers) validTimerIds.add(`${tx}_${ty}`);
+        for (const { tx, ty } of activeBallistaTowers) validTimerIds.add(`bt_${tx}_${ty}`);
+        for (const id of Object.keys(window.towerFireTimers)) {
+            if (!validTimerIds.has(id)) delete window.towerFireTimers[id];
+        }
+    }
     // NOTE: the static canvas is no longer rebuilt here. Mutation sites call
     // patchStaticCache(tx, ty, w, h); init/load call _buildStaticCache() once.
 }

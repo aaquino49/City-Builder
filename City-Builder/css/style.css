@@ -1567,7 +1567,11 @@ canvas { display: block; width: 100%; height: 100%; }
 .game-over-footer {
     padding: 16px 28px 24px;
     text-align: center;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
 }
+#game-over-continue.hidden { display: none; }
 
 /* ===== LEADERBOARD ENTRY PANEL ===== */
 #leaderboard-entry-panel {
