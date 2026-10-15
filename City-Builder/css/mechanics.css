@@ -1,0 +1,13 @@
+/* Pixel Dominion — Mechanics feature styles (Work Order C) */
+
+/* C3: keep the research list scrollable now that it holds more entries */
+#research-upgrades-list {
+    max-height: 62vh;
+    overflow-y: auto;
+}
+
+/* C2: militia button shares .combat-mode-btn; dim when disabled */
+#btn-militia:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

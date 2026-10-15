@@ -220,7 +220,7 @@ export class GameGrid {
                 if (_staticCanvas && !isDynamic && !isUnderConstruction) {
                     // Check if it is damaged; if damaged, we still need to draw the HP bar
                     if (s.hp !== undefined && !window._NON_BURNABLE.has(key)) {
-                        const maxHp = getMaxHP(key);
+                        const maxHp = getMaxHP(key, tx, ty);
                         const hpPct = Math.max(0, s.hp / maxHp);
                         if (hpPct < 1.0) {
                             const renderW = (s.def.width || 1) * TILE_SIZE;
@@ -268,7 +268,7 @@ export class GameGrid {
                     ctx.fillStyle = '#ffdd57';
                     ctx.fillRect(tx * TILE_SIZE + 2, ty * TILE_SIZE + renderH - 6, (renderW - 4) * prog, 4);
                 } else if (s.hp !== undefined && !window._NON_BURNABLE.has(key)) {
-                    const maxHp = getMaxHP(key);
+                    const maxHp = getMaxHP(key, tx, ty);
                     const hpPct = Math.max(0, s.hp / maxHp);
                     if (hpPct < 1.0) {
                         ctx.fillStyle = 'rgba(0,0,0,0.6)';
@@ -464,6 +464,10 @@ const RESEARCH_DEFS = [
     { key: 'iron_discipline',       name: 'Iron Discipline',       desc: 'Soldiers spawn with +25 max HP (100→125).',      goldCost: 150, stoneCost: 0,  ironCost: 40, woodCost: 0,  requires: 0 },
     { key: 'trade_guilds',          name: 'Trade Guilds',          desc: 'Tax income +1 gold per citizen per tick.',       goldCost: 180, stoneCost: 0,  ironCost: 20, woodCost: 0,  requires: 0 },
     { key: 'field_medicine',        name: 'Field Medicine',        desc: 'Military units regenerate HP 2× faster.',        goldCost: 150, stoneCost: 0,  ironCost: 0,  woodCost: 30, requires: 0 },
+    { key: 'masonry_crews',         name: 'Masonry Crews',         desc: 'Repairs twice as fast and cost no wood.',      goldCost: 150, stoneCost: 60, ironCost: 0,  woodCost: 0,  requires: 4 },
+    { key: 'watchtowers',           name: 'Watchtowers',           desc: 'Arrow towers gain +2 tiles of range.',         goldCost: 180, stoneCost: 60, ironCost: 0,  woodCost: 0,  requires: 4 },
+    { key: 'militia_drills',        name: 'Militia Drills',        desc: 'Militia have 100 HP and full soldier damage.', goldCost: 120, stoneCost: 0,  ironCost: 30, woodCost: 0,  requires: 4 },
+    { key: 'preserved_stores',      name: 'Preserved Stores',      desc: 'Winter food drain ×1.75 instead of ×2.5.',    goldCost: 160, stoneCost: 0,  ironCost: 0,  woodCost: 60, requires: 4 },
 ];
 
 function countCompletedResearch() {
@@ -660,7 +664,7 @@ function openBuildingPanel(tx, ty) {
     document.getElementById('building-panel-name').textContent = BUILDINGS[bKey]?.label || bKey;
 
     const statsLines = [];
-    if (s.hp !== undefined) statsLines.push(`HP: ${Math.ceil(s.hp)} / ${getMaxHP(bKey)}`);
+    if (s.hp !== undefined) statsLines.push(`HP: ${Math.ceil(s.hp)} / ${getMaxHP(bKey, tx, ty)}`);
     // Staffing readout for workplaces — answers "why is this farm idle?"
     const _panelJobFor = { farm: 'farmer', lumberyard: 'woodcutter', quarry: 'stone_miner', mine: 'iron_miner' }[bKey];
     if (_panelJobFor && s.def.maxWorkers) {
@@ -706,7 +710,8 @@ function openBuildingPanel(tx, ty) {
         statsLines.push(`Soldier HP: ${_solHp}`);
     } else if (bKey === 'tower') {
         const _towerCB = window.COMBAT_BALANCE?.tower;
-        statsLines.push(`Range: ${isT2 ? (_towerCB?.tier2RangeTiles ?? 10) : (_towerCB?.rangeTiles ?? 8)} tiles`);
+        const _watchBonus = gameState.upgrades?.watchtowers ? 2 : 0;
+        statsLines.push(`Range: ${(isT2 ? (_towerCB?.tier2RangeTiles ?? 10) : (_towerCB?.rangeTiles ?? 8)) + _watchBonus} tiles`);
         statsLines.push(`Damage: ${isT2 ? (_towerCB?.tier2Damage ?? 20) : (_towerCB?.damage ?? 15)} / shot`);
     } else if (bKey === 'ballista_tower') {
         const _bt = (sim.activeBallistaTowers || []).find(e => e.tx === tx && e.ty === ty);
@@ -717,11 +722,15 @@ function openBuildingPanel(tx, ty) {
         statsLines.push(`Damage: ${_bDmg} / bolt`);
         statsLines.push(`Fires every ${_bInt}s`);
     } else if (bKey === 'house') {
-        statsLines.push(`Housing: +${s.def.housing || 4}`);
+        statsLines.push(`Housing: +${isT2 ? 6 : (s.def.housing || 4)}`);
     } else if (bKey === 'tavern') {
         const adj = getAdjacencyBonus(tx, ty, 'tavern');
         statsLines.push(`Happiness bonus`);
         if (adj > 0) statsLines.push(`Adj bonus: +${adj} happiness`);
+    } else if (bKey === 'wall' || bKey === 'gate') {
+        // Walls/gates always report HP (the generic line above covers damaged
+        // ones; this covers the undamaged case where hp may be undefined).
+        if (s.hp === undefined) statsLines.push(`HP: ${getMaxHP(bKey, tx, ty)} / ${getMaxHP(bKey, tx, ty)}`);
     }
 
     document.getElementById('building-panel-stats').innerHTML = statsLines.map(l => `<div>${l}</div>`).join('');
@@ -748,6 +757,12 @@ function openBuildingPanel(tx, ty) {
             gameState.wood  -= cfg.woodCost;
             gameState.stone -= cfg.stoneCost;
             sim.tier2Upgrades[`${ptx},${pty}`] = true;
+            // Stone Rampart / Iron-Bound Gate raise max HP — heal the bonus now.
+            const _upgS = sim.grid.structures[pty]?.[ptx];
+            if (_upgS && _upgS.hp !== undefined) {
+                if (_upgS.def.key === 'wall') _upgS.hp += 100;
+                else if (_upgS.def.key === 'gate') _upgS.hp += 150;
+            }
             rebuildStructureLists();
             refreshUI();
             flashAutosave();
@@ -1453,7 +1468,7 @@ export function renderWorldOverlay() {
     // Gate HP bars (when damaged)
     for (const { tx, ty } of sim.activeGates) {
         const s = sim.grid.structures[ty][tx];
-        const maxHp = getMaxHP('gate');
+        const maxHp = getMaxHP('gate', tx, ty);
         if (!s || (s.hp ?? maxHp) >= maxHp) continue;
         const gx = tx * TILE_SIZE + TILE_SIZE / 2;
         const gy = ty * TILE_SIZE;
@@ -1506,11 +1521,26 @@ export function renderWorldOverlay() {
     ctx.globalAlpha = 1.0;
 
     const soldierAsset = sim.assets['citizen_soldier'];
+    const militiaAsset = sim.assets['citizen_sprite'];
     let renderedSoldiers = 0;
     for (const sol of soldiers) {
         if (!isVisibleUnit(sol)) continue;
         if (renderedSoldiers++ >= 200) break;
-        if (soldierAsset) {
+        if (sol.isMilitia) {
+            // Militia fight in civilian clothes with a brown spear.
+            if (militiaAsset) {
+                _drawFacingSprite(ctx, militiaAsset, sol, sol.x, sol.y);
+            } else {
+                ctx.fillStyle = '#ffdd57';
+                ctx.beginPath(); ctx.arc(sol.x, sol.y, 4, 0, Math.PI * 2); ctx.fill();
+            }
+            ctx.strokeStyle = '#6b4a2a';
+            ctx.lineWidth = 2 / zoom;
+            ctx.beginPath();
+            ctx.moveTo(sol.x + 4, sol.y - 9);
+            ctx.lineTo(sol.x + 8, sol.y + 7);
+            ctx.stroke();
+        } else if (soldierAsset) {
             if (sol.isCaptain) {
                 // Captain: larger sprite with a gold command ring
                 ctx.strokeStyle = '#ffd700';
@@ -2042,6 +2072,13 @@ export function rebuildStructureLists() {
         activeRubble, activeBarracks, activeArcheryRanges,
         buildingCounts, jobfulStructures, underConstruction
     });
+    // Housing is derived so every destroy/demolish path stays correct:
+    // 4 per house + 2 extra per tier-2 (Stone Cottage) house.
+    let _t2Houses = 0;
+    for (const h of activeHouses) {
+        if (sim.tier2Upgrades[`${h.tx},${h.ty}`]) _t2Houses++;
+    }
+    gameState.housing = activeHouses.length * 4 + _t2Houses * 2;
     // Prune fire timers of demolished/destroyed towers (covers every removal path)
     if (window.towerFireTimers) {
         const validTimerIds = new Set();
@@ -2147,12 +2184,22 @@ function calcHappiness() {
         score += 25; sim.happinessFactors.push({ label: 'Food Surplus', signs: '+++', polarity: 'pos' });
     }
 
-    // Tavern factor (capped at +20)
+    // Tavern factor (base capped at +20; +5 per tier-2 Grand Hall, combined cap +25)
     const tavernCount = sim.activeTaverns.length;
+    let _tavernBase = 0;
     if (tavernCount >= 2) {
-        score += 20; sim.happinessFactors.push({ label: 'Taverns (2+)', signs: '+++', polarity: 'pos' });
+        _tavernBase = 20; sim.happinessFactors.push({ label: 'Taverns (2+)', signs: '+++', polarity: 'pos' });
     } else if (tavernCount === 1) {
-        score += 10; sim.happinessFactors.push({ label: 'Tavern', signs: '++', polarity: 'pos' });
+        _tavernBase = 10; sim.happinessFactors.push({ label: 'Tavern', signs: '++', polarity: 'pos' });
+    }
+    let _t2Taverns = 0;
+    for (const t of sim.activeTaverns) {
+        if (sim.tier2Upgrades[`${t.tx},${t.ty}`]) _t2Taverns++;
+    }
+    const _tavernTotal = Math.min(25, _tavernBase + _t2Taverns * 5);
+    score += _tavernTotal;
+    if (_t2Taverns > 0 && _tavernTotal > _tavernBase) {
+        sim.happinessFactors.push({ label: `Grand Hall${_t2Taverns > 1 ? 's' : ''} (+${_tavernTotal - _tavernBase})`, signs: '++', polarity: 'pos' });
     }
 
     // Tavern adjacency bonus (capped — house-ringed tavern farms were an exploit

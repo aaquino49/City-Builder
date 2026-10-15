@@ -716,7 +716,7 @@ export class Citizen {
         }
         // Strike: resource workers stand idle
         if (sim.strikeActive && (this.job === 'farmer' || this.job === 'woodcutter' || this.job === 'stone_miner' || this.job === 'iron_miner')) return;
-        if (this.job !== 'builder' && this.job !== 'rebel') {
+        if (this.job !== 'builder' && this.job !== 'rebel' && this.job !== 'repairer') {
             const ws = grid.structures[this._workTY]?.[this._workTX];
             const expectedJob = ws ? {
                 farm: 'farmer',
@@ -740,6 +740,7 @@ export class Citizen {
             case 'stone_miner': this._updateMiner(dtSec, grid, 'stone_deposit', 'stone', 'quarry'); break;
             case 'iron_miner':  this._updateMiner(dtSec, grid, 'iron_vein', 'iron', 'mine'); break;
             case 'builder':     this._updateBuilder(dtSec, grid); break;
+            case 'repairer':    this._updateRepairer(dtSec, grid); break;
             case 'rebel':       this._updateRebel(dtSec, grid); break;
         }
     }
@@ -1008,6 +1009,61 @@ export class Citizen {
                 this._workTY = -1;
             }
         }
+    }
+
+    _goIdleRepair() {
+        this.job = 'idle';
+        this._phase = 'idle';
+        this._workTX = -1;
+        this._workTY = -1;
+        this._repairWoodAcc = 0;
+    }
+
+    _updateRepairer(dtSec, grid) {
+        const s = grid.structures[this._workTY]?.[this._workTX];
+        const maxHp = window.getMaxHP ? window.getMaxHP(s?.def.key, this._workTX, this._workTY) : 100;
+        // Gone, fully repaired, or never had HP (rubble/trees) → back to idle.
+        if (!s || s.hp === undefined || s.hp >= maxHp || (s.progress ?? 1.0) < 1.0) {
+            this._goIdleRepair();
+            return;
+        }
+        if (this._phase === 'go_work') {
+            if (this._isAtTile(this._workTX, this._workTY)) {
+                this._phase = 'repairing';
+            } else if (this.state !== 'walking') {
+                this._setTargetTile(this._workTX, this._workTY, grid);
+            }
+            return;
+        }
+        this._phase = 'repairing';
+        if (!this._isAtTile(this._workTX, this._workTY)) {
+            this._phase = 'go_work';
+            if (this.state !== 'walking') this._setTargetTile(this._workTX, this._workTY, grid);
+            return;
+        }
+        const fast = !!gameState.upgrades?.masonry_crews;
+        const amount = Math.min((fast ? 16 : 8) * dtSec, maxHp - s.hp);
+        if (amount <= 0) {
+            this._goIdleRepair();
+            return;
+        }
+        if (!fast) {
+            // 1 wood per 10 HP restored; fractional cost accumulates on the citizen.
+            this._repairWoodAcc = (this._repairWoodAcc || 0) + amount / 10;
+            const whole = Math.floor(this._repairWoodAcc);
+            if (whole > 0) {
+                if ((gameState.wood ?? 0) < whole) {
+                    this._goIdleRepair();
+                    return;
+                }
+                gameState.wood -= whole;
+                this._repairWoodAcc -= whole;
+            }
+        }
+        s.hp = Math.min(maxHp, s.hp + amount);
+        this._tickAmbientWalk(dtSec, grid, this._workTX, this._workTY, 1);
+        if (Math.random() < dtSec * 3) playTapSFX();
+        if (s.hp >= maxHp) this._goIdleRepair();
     }
 }
 
@@ -1775,11 +1831,12 @@ export class Raider {
                         // Fire not possible — fall through to normal HP damage
                     }
                     // Deal HP damage; destroy only when HP exhausted
-                    const maxHp = getMaxHP(s.def.key);
+                    const maxHp = getMaxHP(s.def.key, parentTX, parentTY);
                     const _isWallGate = s.def.key === 'wall' || s.def.key === 'gate';
                     const RB = window.COMBAT_BALANCE?.raider;
+                    const _defRed = window.getDefenseDamageReduction ? window.getDefenseDamageReduction() : 0;
                     s.hp = (s.hp ?? maxHp) - (this.type === 'siege' && _isWallGate
-                        ? (RB?.siegeWallDamage ?? 75) : (RB?.buildingDamage ?? 50));
+                        ? (RB?.siegeWallDamage ?? 75) : (RB?.buildingDamage ?? 50)) * (1 - _defRed);
                     const p = getPooledParticle();
                     p.x = parentTX * TILE_SIZE + TILE_SIZE / 2; p.y = parentTY * TILE_SIZE + TILE_SIZE / 2; p.type = 'slash'; p.timer = 0; p.duration = 0.8; p.alpha = 1.0;
                     particles.push(p);

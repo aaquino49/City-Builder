@@ -7,14 +7,19 @@ import {
 // ===================== INCIDENTS =====================
 const _BUILDING_HP = { house: 80, tower: 200, wall: 100, barracks: 150, farm: 80, lumberyard: 80, quarry: 120, mine: 150, archery_range: 100, ballista_tower: 200, academy: 150, monument: 1000 };
 
-function getMaxHP(key) {
+function getMaxHP(key, tx, ty) {
+    // Tier-2 bonus needs the tile: +100 wall (Stone Rampart), +150 gate (Iron-Bound).
+    const isT2 = tx !== undefined && ty !== undefined && !!sim.tier2Upgrades[`${tx},${ty}`];
     if (key === 'gate') {
-        return gameState.upgrades?.reinforced_masonry ? 350 : 250;
+        let hp = gameState.upgrades?.reinforced_masonry ? 350 : 250;
+        if (isT2) hp += 150;
+        return hp;
     }
     let base = _BUILDING_HP[key] ?? 100;
     if (key === 'wall' && gameState.upgrades?.reinforced_masonry) {
-        return base + 100;
+        base += 100;
     }
+    if (key === 'wall' && isT2) base += 100;
     return base;
 }
 export const _NON_BURNABLE = new Set(['obstacle_tree', 'rubble', 'stone_deposit', 'iron_vein']);
@@ -1130,7 +1135,7 @@ function updateStatsOverlay() {
     const citizenCount = gameState.happiness < 40 ? Math.floor(gameState.population * 0.5) : gameState.population;
     const baseTax = citizenCount * (ECONOMY_BALANCE?.baseGoldPerCitizen ?? 1);
     const tradeBonus = gameState.upgrades?.trade_guilds ? citizenCount * (ECONOMY_BALANCE?.tradeGuildsGoldPerCitizen ?? 1) : 0;
-    const upkeep = soldiers.length * (ECONOMY_BALANCE?.militaryUpkeep?.soldier ?? 1)
+    const upkeep = soldiers.filter(s => !s.isMilitia).length * (ECONOMY_BALANCE?.militaryUpkeep?.soldier ?? 1)
                  + archers.length  * (ECONOMY_BALANCE?.militaryUpkeep?.archer ?? 1)
                  + knights.length  * (ECONOMY_BALANCE?.militaryUpkeep?.knight ?? 2);
     const taxPerMin = Math.round((baseTax + tradeBonus - upkeep) / TAX_INTERVAL * 60);
@@ -1146,7 +1151,9 @@ function updateStatsOverlay() {
         farmers * workerFoodPerCycle * (60 / cycleSec) +
         farmCount * passivePerFarmCycle * (60 / cycleSec));
     const militaryCount = soldiers.length + archers.length + knights.length;
-    const foodDrainPerMin = Math.round((gameState.population + militaryCount) * seasonMod.foodDrainMult / TAX_INTERVAL * 60);
+    let _drainMult = seasonMod.foodDrainMult;
+    if (gameState.season === 'Winter' && gameState.upgrades?.preserved_stores) _drainMult = 1.75;
+    const foodDrainPerMin = Math.round((gameState.population + militaryCount) * _drainMult / TAX_INTERVAL * 60);
     const foodPerMin = `+${foodProdPerMin} / -${foodDrainPerMin}`;
     // Gather trips vary with travel distance — estimate from a typical round trip
     const tripSec = PB.gatherTripSecEstimate ?? 8;

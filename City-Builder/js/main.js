@@ -220,7 +220,7 @@ function handleGridClick(clientX, clientY) {
         const s = root.structure;
         const rtx = root.tx;
         const rty = root.ty;
-        if (s && s.def.key === 'gate') {
+        if (s && s.def.key === 'gate' && !window.__pdShiftHeld) {
             closeBuildingPanel();
             s.manuallyLocked = !s.manuallyLocked;
             if (s.manuallyLocked) s.gateOpen = false;
@@ -354,6 +354,8 @@ function updateSoldiers(dtSec, activeRaiders) {
     for (let si = soldiers.length - 1; si >= 0; si--) {
         const sol = soldiers[si];
         let dps = sol.isCaptain ? (CBcap?.meleeDps ?? 30) : (COMBAT_BALANCE?.soldier?.meleeDps ?? 15);
+        // Militia fight at reduced strength unless trained with militia_drills.
+        if (sol.isMilitia && !sol.isCaptain && !gameState.upgrades?.militia_drills) dps *= 0.6;
         if (!sol.isCaptain && captains.length) {
             for (const cap of captains) {
                 const cdx = cap.x - sol.x, cdy = cap.y - sol.y;
@@ -480,8 +482,9 @@ function updateGates(dtSec, activeRaiders) {
                 const dx = r.x - gx, dy = r.y - gy;
                 const distSq = dx * dx + dy * dy;
                 if (distSq <= breachLimitSq) {
-                    const maxHp = getMaxHP('gate');
-                    s.hp = (s.hp ?? maxHp) - (COMBAT_BALANCE?.raider?.gateBreachDps ?? 10) * dtSec;
+                    const maxHp = getMaxHP('gate', tx, ty);
+                    const defRed = window.getDefenseDamageReduction ? window.getDefenseDamageReduction() : 0;
+                    s.hp = (s.hp ?? maxHp) - (COMBAT_BALANCE?.raider?.gateBreachDps ?? 10) * (1 - defRed) * dtSec;
                     if (s.hp <= 0) {
                         delete sim.tier2Upgrades[`${tx},${ty}`];
                         sim.grid.structures[ty][tx] = createRubble();
@@ -838,7 +841,8 @@ function updateRaiders(dtSec) {
         const towerX = tx * TILE_SIZE + TILE_SIZE / 2;
         const towerY = ty * TILE_SIZE + TILE_SIZE / 2;
         const isT2Tower = !!sim.tier2Upgrades[`${tx},${ty}`];
-        const RANGE = (isT2Tower ? (TB?.tier2RangeTiles ?? 10) : (TB?.rangeTiles ?? 8)) * TILE_SIZE;
+        const watchBonus = gameState.upgrades?.watchtowers ? 2 : 0;
+        const RANGE = ((isT2Tower ? (TB?.tier2RangeTiles ?? 10) : (TB?.rangeTiles ?? 8)) + watchBonus) * TILE_SIZE;
         const RANGESQ = RANGE * RANGE;
         let closest = null, closestDistSq = Infinity;
         for (const r of raiders) {
@@ -1223,6 +1227,38 @@ function assignCitizenJobs() {
         idle._workTY = ty;
         hasBuilder[key] = true;
     }
+
+    // Repairs: at most ONE repairer per damaged building, max 3 total.
+    // Skipped during raids/scouts (hiding overrides jobs anyway).
+    if (!sim.raidActive && !sim.scoutPhase) {
+        const hasRepairer = {};
+        let repairerTotal = 0;
+        for (const c of citizens) {
+            if (c.job !== 'repairer') continue;
+            repairerTotal++;
+            if (c._workTX !== -1 && c._workTY !== -1) hasRepairer[`${c._workTX},${c._workTY}`] = true;
+        }
+        if (repairerTotal < 3) {
+            for (let ty = 0; ty < sim.grid.height && repairerTotal < 3; ty++) {
+                for (let tx = 0; tx < sim.grid.width && repairerTotal < 3; tx++) {
+                    if (qi >= idleQueue.length) break;
+                    const s = sim.grid.structures[ty][tx];
+                    if (!s || s.isChild || !BUILDINGS[s.def.key]) continue;
+                    if ((s.progress ?? 1) < 1) continue;
+                    if (s.hp === undefined || s.hp >= window.getMaxHP(s.def.key, tx, ty)) continue;
+                    const key = `${tx},${ty}`;
+                    if (hasRepairer[key]) continue;
+                    const idle = idleQueue[qi++];
+                    idle.job = 'repairer';
+                    idle._phase = 'go_work';
+                    idle._workTX = tx;
+                    idle._workTY = ty;
+                    hasRepairer[key] = true;
+                    repairerTotal++;
+                }
+            }
+        }
+    }
 }
 
 function updatePassiveFarmProduction(dtSec) {
@@ -1502,7 +1538,8 @@ function update(dtMs) {
     if (nextTaxTimer >= TAX_INTERVAL) {
         sim.taxTimer = 0;
         // Food consumed by population and military each tax tick
-        const foodDrainMult = SEASON_MODIFIERS[SEASONS.indexOf(gameState.season)].foodDrainMult;
+        let foodDrainMult = SEASON_MODIFIERS[SEASONS.indexOf(gameState.season)].foodDrainMult;
+        if (gameState.season === 'Winter' && gameState.upgrades?.preserved_stores) foodDrainMult = 1.75;
         const foodDrain = (gameState.population + soldiers.length + archers.length + knights.length) * foodDrainMult;
         if (foodDrain > 0) gameState.food = Math.max(0, gameState.food - foodDrain);
         gameState.food = Math.min(gameState.food, getFoodCap());
@@ -1527,7 +1564,7 @@ function update(dtMs) {
         const citizenCount = gameState.happiness < 40 ? Math.floor(gameState.population * 0.5) : gameState.population;
         const baseTax = citizenCount * (ECONOMY_BALANCE?.baseGoldPerCitizen ?? 1);
         const tradeBonus = gameState.upgrades?.trade_guilds ? citizenCount * (ECONOMY_BALANCE?.tradeGuildsGoldPerCitizen ?? 1) : 0;
-        const upkeep = soldiers.length * (ECONOMY_BALANCE?.militaryUpkeep?.soldier ?? 1)
+        const upkeep = soldiers.filter(s => !s.isMilitia).length * (ECONOMY_BALANCE?.militaryUpkeep?.soldier ?? 1)
                      + archers.length  * (ECONOMY_BALANCE?.militaryUpkeep?.archer ?? 1)
                      + knights.length  * (ECONOMY_BALANCE?.militaryUpkeep?.knight ?? 2);
         const tax = baseTax + tradeBonus;

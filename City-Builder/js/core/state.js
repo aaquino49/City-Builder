@@ -91,6 +91,10 @@ export const TIER2_UPGRADES = {
     barracks:    { name: 'Fortified Barracks', goldCost: 150, woodCost: 0,  stoneCost: 50 },
     tower:       { name: 'Reinforced Tower',   goldCost: 120, woodCost: 0,  stoneCost: 40 },
     granary:     { name: 'Extended Granary',   goldCost: 100, woodCost: 40, stoneCost: 0  },
+    house:      { name: 'Stone Cottage',    goldCost: 60,  woodCost: 20, stoneCost: 20 },
+    tavern:     { name: 'Grand Hall',       goldCost: 100, woodCost: 40, stoneCost: 20 },
+    wall:       { name: 'Stone Rampart',    goldCost: 10,  woodCost: 0,  stoneCost: 15 },
+    gate:       { name: 'Iron-Bound Gate',  goldCost: 30,  woodCost: 0,  stoneCost: 20 },
 };
 
 export const UNIT_BALANCE = Object.freeze({
@@ -288,6 +292,10 @@ const _rawGameState = {
         iron_discipline: false,
         trade_guilds: false,
         field_medicine: false,
+        masonry_crews: false,
+        watchtowers: false,
+        militia_drills: false,
+        preserved_stores: false,
     },
     activeResearch: null,
     raidersDefeated: 0,
@@ -626,7 +634,7 @@ export function saveGame(slotKey = SAVE_KEY) {
             garrisonInitialized: c.garrisonInitialized,
         })),
         diplomacyFlags: Object.assign({}, gameState.diplomacyFlags || {}),
-        soldiers: soldiers.map(s => ({ x: s.x, y: s.y, hp: s.hp, maxHp: s.maxHp, isCaptain: s.isCaptain || undefined })),
+        soldiers: soldiers.map(s => ({ x: s.x, y: s.y, hp: s.hp, maxHp: s.maxHp, isCaptain: s.isCaptain || undefined, isMilitia: s.isMilitia || undefined })),
         archers:  archers.map(a => ({ x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp })),
         knights:  knights.map(k => ({ x: k.x, y: k.y, hp: k.hp, maxHp: k.maxHp })),
         raiders:  raiders.map(r => ({
@@ -835,6 +843,10 @@ export function loadGame(slotKey = SAVE_KEY) {
         iron_discipline: false,
         trade_guilds: false,
         field_medicine: false,
+        masonry_crews: false,
+        watchtowers: false,
+        militia_drills: false,
+        preserved_stores: false,
     }, d.upgrades ?? {});
     gameState.activeResearch = d.activeResearch ?? null;
     gameState.raidersDefeated = d.raidersDefeated ?? 0;
@@ -857,11 +869,12 @@ export function loadGame(slotKey = SAVE_KEY) {
     
     const cx = (sim.grid.width / 2) * TILE_SIZE, cy = (sim.grid.height / 2) * TILE_SIZE;
     for (let i = 0; i < gameState.population; i++) citizens.push(new Citizen(cx, cy));
-    (d.soldiers || []).forEach(({ x, y, hp, maxHp, isCaptain }) => {
+    (d.soldiers || []).forEach(({ x, y, hp, maxHp, isCaptain, isMilitia }) => {
         const s = new Soldier(x, y);
         if (hp !== undefined) s.hp = hp;
         if (maxHp !== undefined) s.maxHp = maxHp;
         if (isCaptain) s.isCaptain = true;
+        if (isMilitia) s.isMilitia = true;
         soldiers.push(s);
     });
     (d.archers  || []).forEach(({ x, y, hp, maxHp }) => {
