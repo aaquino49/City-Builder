@@ -9,3 +9,4 @@ import './rates.js';
 import './seed.js';
 import './chronicle.js';
 import './objectives.js';
+import './controls.js';

@@ -505,6 +505,8 @@ export const sim = {
     assets: null,
     raidPathBudget: 15,
     eventLog: [],
+    clickInterceptor: null,
+    rallyPoint: null,
 };
 
 window.sim = sim;
