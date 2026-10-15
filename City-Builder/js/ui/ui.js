@@ -26,13 +26,54 @@ function _drawFacingSprite(ctx, asset, u, drawX, drawY, size = 16) {
     }
 }
 
+export function makeSeededRng(seedString) {
+    // cyrb53 string hash → mulberry32 PRNG; returns () => float in [0,1).
+    const s = String(seedString || '');
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0; i < s.length; i++) {
+        const ch = s.charCodeAt(i);
+        h1 = Math.imul(h1 ^ ch, 2654435761);
+        h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    let a = 4294967296 - (2097151 & (h2 >>> 0));
+    if (a <= 0) a += 4294967295;
+    return function () {
+        a |= 0; a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+export function randomSeedString() {
+    // 6 chars from an unambiguous alphabet (no 0/O/1/I).
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let out = '';
+    for (let i = 0; i < 6; i++) out += chars[Math.floor(Math.random() * chars.length)];
+    return out;
+}
+
 export class GameGrid {
-    constructor(width = GRID_WIDTH, height = GRID_HEIGHT) {
+    constructor(width = GRID_WIDTH, height = GRID_HEIGHT, seed) {
         this.width = width;
         this.height = height;
+        this.seed = seed || randomSeedString();
+        this.rng = makeSeededRng(this.seed);
         this.camera = { x: 0, y: 0, zoom: 1.0 };
         this.tiles = this._generateTiles();
         this.structures = this._initStructures();
+        this._spawnTrees();
+        this._spawnOutcrops();
+    }
+
+    regenerate(seed) {
+        // Reset the world from a new seed (preview / new-game only).
+        this.seed = seed || randomSeedString();
+        this.rng = makeSeededRng(this.seed);
+        this.structures = this._initStructures();
+        this.tiles = this._generateTiles();
         this._spawnTrees();
         this._spawnOutcrops();
     }
@@ -56,11 +97,11 @@ export class GameGrid {
     // 5% sprinkle, so each map has distinct wooded regions worth building near.
     // The starting territory (radius ~6 around center) is kept mostly clear.
     _spawnTrees() {
-        const clusterCount = 5 + Math.floor(Math.random() * 4);
+        const clusterCount = 5 + Math.floor(this.rng() * 4);
         for (let c = 0; c < clusterCount; c++) {
-            const ccx = 4 + Math.random() * (this.width - 8);
-            const ccy = 4 + Math.random() * (this.height - 8);
-            const radius = 3 + Math.random() * 5;
+            const ccx = 4 + this.rng() * (this.width - 8);
+            const ccy = 4 + this.rng() * (this.height - 8);
+            const radius = 3 + this.rng() * 5;
             const r0 = Math.floor(radius);
             for (let dy = -r0; dy <= r0; dy++) {
                 for (let dx = -r0; dx <= r0; dx++) {
@@ -70,7 +111,7 @@ export class GameGrid {
                     if (Math.hypot(tx - 32, ty - 32) < 6) continue; // keep the start clear-ish
                     const dist = Math.hypot(dx, dy);
                     if (dist > radius) continue;
-                    if (Math.random() < 0.55 * (1 - dist / (radius + 1))) {
+                    if (this.rng() < 0.55 * (1 - dist / (radius + 1))) {
                         this.structures[ty][tx] = { def: TREE_DEF };
                     }
                 }
@@ -79,7 +120,7 @@ export class GameGrid {
         // Light scatter everywhere else so lone trees still dot the map
         for (let ty = 0; ty < this.height; ty++) {
             for (let tx = 0; tx < this.width; tx++) {
-                if (this.tiles[ty][tx] === 'tile_grass' && !this.structures[ty][tx] && Math.random() < 0.015) {
+                if (this.tiles[ty][tx] === 'tile_grass' && !this.structures[ty][tx] && this.rng() < 0.015) {
                     this.structures[ty][tx] = { def: TREE_DEF };
                 }
             }
@@ -91,16 +132,16 @@ export class GameGrid {
     _spawnOutcrops() {
         const spawnVein = (def, veins, minSize, maxSize) => {
             for (let v = 0; v < veins; v++) {
-                let tx = Math.floor(4 + Math.random() * (this.width - 8));
-                let ty = Math.floor(4 + Math.random() * (this.height - 8));
+                let tx = Math.floor(4 + this.rng() * (this.width - 8));
+                let ty = Math.floor(4 + this.rng() * (this.height - 8));
                 if (Math.hypot(tx - 32, ty - 32) < 5) continue; // not on the town center
-                const size = minSize + Math.floor(Math.random() * (maxSize - minSize + 1));
+                const size = minSize + Math.floor(this.rng() * (maxSize - minSize + 1));
                 for (let n = 0; n < size; n++) {
                     if (this.inBounds(tx, ty) && this.tiles[ty][tx] === 'tile_grass' && !this.structures[ty][tx]) {
                         this.structures[ty][tx] = { def, hp: 5 };
                     }
-                    tx += Math.floor(Math.random() * 3) - 1;
-                    ty += Math.floor(Math.random() * 3) - 1;
+                    tx += Math.floor(this.rng() * 3) - 1;
+                    ty += Math.floor(this.rng() * 3) - 1;
                 }
             }
         };
@@ -975,6 +1016,7 @@ export function triggerVictory(reason = 'default') {
     
     updateLeaderboardDisplays();
     document.getElementById('game-over-modal').classList.add('open');
+    runHook('gameOver', { victory: true });
 }
 
 function triggerDefeat() {
@@ -1024,6 +1066,7 @@ function triggerDefeat() {
     
     updateLeaderboardDisplays();
     document.getElementById('game-over-modal').classList.add('open');
+    runHook('gameOver', { victory: false });
 }
 
 
@@ -2309,7 +2352,7 @@ Object.assign(window, {
     countBuildings, getScaledCost, calcDefense, calcHappiness, getSpawnInterval, formatTime,
     _buildStaticCache, _staticCanvas, patchStaticCache,
 
-    GameGrid, openResearchModal, closeResearchModal, showDiplomacyModal, chooseDiplomacyOption,
+    GameGrid, makeSeededRng, randomSeedString, openResearchModal, closeResearchModal, showDiplomacyModal, chooseDiplomacyOption,
     closeBuildingPanel, openBuildingPanel, updateResearchModalUI, startResearch, updateResearch,
     applyUpgradeEffects, getHighScores, saveHighScores, isHighScore, addHighScoreEntry,
     updateLeaderboardDisplays, calculateCurrentScore, triggerVictory, triggerDefeat,

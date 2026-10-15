@@ -6,3 +6,6 @@ import './minimap.js';
 import './scoutmarkers.js';
 import './eventlog.js';
 import './rates.js';
+import './seed.js';
+import './chronicle.js';
+import './objectives.js';

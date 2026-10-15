@@ -966,6 +966,7 @@ function resolveRaid() {
     const killsThisWave = Math.max(0, (gameState.raidersDefeated || 0) - _raidersDefeatedAtWaveStart);
     const isVictory = sim.raidBuildingsDestroyed <= Math.max(1, Math.floor(waveSize * 0.1))
                    && sim.raidCitizensKilled   <= Math.max(1, Math.floor(waveSize * 0.15));
+    sim.lastRaidOutcome = isVictory ? 'won' : 'lost';
     for (const r of raiders) {
         if (r.state !== 'walking' || r.isCampGuard) continue;
         if (isVictory) {
@@ -1779,7 +1780,6 @@ document.getElementById('btn-start').addEventListener('click', () => {
     sim.timeScale = 1;
     if (window.updateTimePauseUI) window.updateTimePauseUI();
     lastTime = 0;
-    showTutorial(); // Show tutorial on game start
     runHook('newGame');
 });
 

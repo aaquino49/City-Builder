@@ -231,6 +231,7 @@ export const hooks = {
     scoutStart: [],    // (plan) — scout warning began; plan = { waveNum, size, dirs, torch, siege }
     raidStart: [],     // (plan) — raid wave spawned
     raidEnd: [],       // () — post-raid cleanup ran (_clearRaidAftermath)
+    gameOver: [],      // ({ victory: bool }) — triggerVictory / triggerDefeat ran
     uiRefresh: [],     // () — refreshUI() ran (resource bar / build menu updated)
 };
 export function onHook(name, fn) {

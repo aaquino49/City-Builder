@@ -1,0 +1,247 @@
+/* Pixel Dominion — Progress features (Work Order E): map seed, chronicle, objectives. */
+
+/* ===== START SCREEN SEED ROW ===== */
+.start-seed-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin: 0 auto 18px;
+    width: min(760px, calc(100vw - 40px));
+}
+
+.start-seed-row label {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 12px;
+    letter-spacing: 4px;
+    color: var(--gold);
+    opacity: 0.9;
+    white-space: nowrap;
+}
+
+#seed-input {
+    width: 160px;
+    padding: 7px 10px;
+    background: rgba(240, 224, 178, 0.08);
+    border: 1px solid rgba(200, 168, 104, 0.4);
+    border-radius: 2px;
+    color: var(--parchment);
+    font-family: 'VT323', monospace;
+    font-size: 18px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    text-align: center;
+}
+
+#seed-input::placeholder {
+    color: rgba(200, 168, 104, 0.4);
+}
+
+#seed-input:focus {
+    outline: none;
+    border-color: var(--gold);
+}
+
+#seed-shuffle {
+    width: auto;
+    flex-shrink: 0;
+    padding: 7px 12px;
+    font-size: 16px;
+}
+
+/* ===== SETTINGS DRAWER SEED ===== */
+.drawer-seed {
+    border-top: 1px solid var(--parchment-edge);
+    margin-top: 10px;
+    padding-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'EB Garamond', serif;
+    font-size: 12px;
+    color: var(--ink-soft);
+}
+
+#drawer-seed-value {
+    font-family: 'VT323', monospace;
+    font-size: 15px;
+    letter-spacing: 1px;
+    color: var(--wine-dark);
+    flex: 1;
+}
+
+#btn-copy-seed {
+    width: auto;
+    padding: 4px 10px;
+    font-size: 10px;
+    flex-shrink: 0;
+}
+
+/* ===== OBJECTIVES CARD ===== */
+#objectives-card {
+    position: absolute;
+    left: 16px;
+    width: 230px;
+    background: linear-gradient(180deg, var(--parchment) 0%, var(--parchment-dark) 100%);
+    border: 2px solid var(--parchment-edge);
+    border-radius: 2px;
+    color: var(--ink);
+    box-shadow: 0 6px 18px var(--shadow), inset 0 0 0 1px rgba(255, 240, 200, 0.5);
+    z-index: 10;
+    pointer-events: auto;
+}
+
+.objectives-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--parchment-edge);
+}
+
+.objectives-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: var(--wine-dark);
+}
+
+.objectives-toggle {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 14px;
+    color: var(--ink-faint);
+}
+
+.objectives-list {
+    padding: 6px 10px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.objective-row {
+    font-family: 'EB Garamond', serif;
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.objective-current {
+    color: var(--ink);
+    font-weight: 600;
+}
+
+.objective-next {
+    color: var(--ink-faint);
+    opacity: 0.6;
+    font-style: italic;
+}
+
+.objective-done-all {
+    color: var(--leaf-dark);
+    font-style: italic;
+    text-align: center;
+}
+
+/* ===== END-OF-GAME CHRONICLE ===== */
+.chronicle-section {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--parchment-edge);
+    margin-top: 6px;
+    padding-top: 10px;
+}
+
+.chronicle-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 13px;
+    letter-spacing: 3px;
+    color: var(--wine-dark);
+    text-align: center;
+}
+
+.chronicle-range {
+    font-family: 'EB Garamond', serif;
+    font-style: italic;
+    font-size: 11px;
+    color: var(--ink-faint);
+    text-align: center;
+    margin-bottom: 8px;
+}
+
+.chronicle-totals {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.chronicle-total {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: rgba(140, 102, 24, 0.06);
+    border: 1px solid var(--parchment-edge);
+    border-radius: 2px;
+    padding: 5px 2px;
+}
+
+.chronicle-total-num {
+    font-family: 'VT323', monospace;
+    font-size: 17px;
+    color: var(--ink);
+    line-height: 1;
+}
+
+.chronicle-total-cap {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 8px;
+    letter-spacing: 1px;
+    color: var(--ink-faint);
+    margin-top: 2px;
+    text-align: center;
+}
+
+.chronicle-charts {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.chronicle-chart-label {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--ink-soft);
+    margin-bottom: 2px;
+}
+
+.chronicle-chart-empty {
+    font-family: 'EB Garamond', serif;
+    font-style: italic;
+    color: var(--ink-faint);
+}
+
+.chronicle-spark {
+    display: block;
+    background: rgba(255, 248, 232, 0.5);
+    border: 1px solid var(--parchment-edge);
+    border-radius: 2px;
+}
+
+.chronicle-spark-fill {
+    fill: rgba(200, 168, 104, 0.25);
+    stroke: none;
+}
+
+.chronicle-spark-line {
+    fill: none;
+    stroke: var(--ink);
+    stroke-width: 1.5;
+}
+
+.chronicle-spark-minmax {
+    font-family: 'VT323', monospace;
+    font-size: 10px;
+    fill: var(--ink-faint);
+}
