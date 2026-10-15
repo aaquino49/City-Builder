@@ -8,6 +8,7 @@
     <!-- Fonts are self-hosted (assets/fonts/) so the game looks right offline -->
     <link rel="stylesheet" href="css/fonts.css">
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/progress.css">
 </head>
 <body>
 <div id="game-container">
@@ -85,6 +86,7 @@
             <button id="btn-mute" class="scroll-btn">♪ MUTE</button>
             <button id="btn-reset" class="scroll-btn danger">✕ RESET GAME</button>
         </div>
+        <div class="drawer-seed">Seed: <span id="drawer-seed-value"></span> <button id="btn-copy-seed" class="scroll-btn">COPY</button></div>
         <div class="drawer-shortcuts">
             <div class="shortcut-line">1–9 Build · 0 Demolish · ESC Cancel</div>
             <div class="shortcut-line">TAB Stats · M Music · N SFX</div>
@@ -400,6 +402,7 @@
             <div class="start-difficulty-shell">
                 <div class="start-difficulty-title">CHOOSE YOUR DIFFICULTY</div>
                 <div id="difficulty-options" class="difficulty-options"></div>
+                <div class="start-seed-row"><label for="seed-input">MAP SEED</label><input id="seed-input" maxlength="12" placeholder="random" autocomplete="off"><button id="seed-shuffle" type="button" class="scroll-btn" title="New random seed">⟳</button></div>
             </div>
 
             <!-- Start Screen Leaderboard -->
