@@ -63,7 +63,7 @@ function _buildModal() {
             <div class="saveslots-header">
                 <div class="saveslots-seal">✎</div>
                 <div>
-                    <div class="saveslots-title">CHRONICLES OF THE REALM</div>
+                    <div class="saveslots-title">SAVED REIGNS</div>
                     <div class="saveslots-subtitle">Record your reign — or return to a past one</div>
                 </div>
                 <button id="saveslots-close-x" class="research-close-x" title="Close">×</button>

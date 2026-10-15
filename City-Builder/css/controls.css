@@ -21,3 +21,22 @@
     pointer-events: none;
     opacity: 0.85;
 }
+
+/* WO6 #3: four combat buttons (DEFEND/ATTACK/RALLY/ARM FOLK) as a compact 2×2
+   grid so the bottom HUD bar keeps roughly its original height. This file
+   loads after style.css, so it overrides the vertical flex stack there; the
+   existing .combat-mode-btn.active styles are untouched. */
+#combat-mode-btns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px;
+    margin-left: 10px;
+    align-self: center;
+    pointer-events: auto;
+}
+
+#combat-mode-btns .combat-mode-btn {
+    font-size: 9px;
+    letter-spacing: 0.5px;
+    padding: 2px 5px;
+}

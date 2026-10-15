@@ -34,14 +34,20 @@ function countBuildings() {
 }
 
 function takeSample() {
-    tracker.samples.push({
+    const sample = {
         day: gameState.day,
         folk: folkCount(),
         military: militaryCount(),
         gold: Math.round(gameState.gold || 0),
         food: Math.round(gameState.food || 0),
         raidersDefeated: gameState.raidersDefeated || 0,
-    });
+    };
+    // Avoid duplicate samples for the same day: refresh today's point in
+    // place so short games still get ≥ 2 points once ≥ 1 day has passed.
+    const last = tracker.samples[tracker.samples.length - 1];
+    if (last && last.day === sample.day) tracker.samples[tracker.samples.length - 1] = sample;
+    else tracker.samples.push(sample);
+    tracker.lastDay = sample.day;
     tracker.peakFolk = Math.max(tracker.peakFolk, folkCount());
     tracker.maxBuildings = Math.max(tracker.maxBuildings, countBuildings());
 }
@@ -70,7 +76,10 @@ function countOutcome(outcome) {
     else if (outcome === 'lost') tracker.raidsLost++;
 }
 
-onHook('newGame', resetTracker);
+onHook('newGame', () => {
+    resetTracker();
+    takeSample(); // day-1 point, so even short games can chart once day 2 lands
+});
 
 onHook('update', () => {
     if (!gameState.started) return;
@@ -154,6 +163,7 @@ onHook('gameOver', () => {
         countOutcome(sim.lastRaidOutcome);
         sim.lastRaidOutcome = null;
     }
+    takeSample(); // final point (deduped per day) before rendering
     renderChronicle();
 });
 
@@ -192,5 +202,8 @@ onHook('load', (data) => {
     }
     tracker.prevCamps = (sim.raiderCamps || []).length;
     tracker.suppressCampCount = false;
+    // A load mid-day-1 (or an old save with no samples) would otherwise chart
+    // "—"; sample now unless today already has a point (deduped in takeSample).
+    if (!tracker.samples.some((s) => s.day === gameState.day)) takeSample();
     publishCounter();
 });

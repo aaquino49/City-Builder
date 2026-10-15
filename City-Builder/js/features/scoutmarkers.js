@@ -30,18 +30,45 @@ function activeDirs() {
     return remembered;
 }
 
-// Ray from screen center along (dx,dy) meets the 40px-inset screen rectangle.
+// Visible "safe rectangle": the canvas area not covered by DOM panels. The
+// chevrons must stay clear of the bottom resource bar, the top raid scroll
+// and the right build menu (all DOM, drawn over the canvas).
+function safeRect(w, h) {
+    let top = 40 + 16, bottom = h - 40 - 16, right = w - 40 - 16;
+    const left = 24;
+    const rectOf = (id) => {
+        const el = document.getElementById(id);
+        if (!el || !el.offsetParent) return null; // missing or hidden → fallback
+        const r = el.getBoundingClientRect();
+        if (!r || r.width <= 0 || r.height <= 0) return null;
+        return r;
+    };
+    const raid = rectOf('raid-banner-wrap');
+    if (raid) top = raid.bottom + 16;
+    const hud = rectOf('hud-bar');
+    if (hud) bottom = hud.top - 16;
+    const menu = rectOf('build-menu');
+    if (menu) right = menu.left - 16;
+    // Sanity: fall back to 40px insets if the DOM gives a degenerate rect.
+    if (!(top < bottom - 20)) { top = 40; bottom = h - 40; }
+    if (!(left < right - 20)) right = w - 40;
+    top = Math.max(0, Math.min(h - 1, top));
+    bottom = Math.max(0, Math.min(h, bottom));
+    return { left, top, right: Math.max(left + 1, Math.min(w, right)), bottom };
+}
+
+// Ray from the safe rect's center along (dx,dy) meets the safe rectangle.
 function edgePoint(dx, dy, w, h) {
-    const cx = w / 2, cy = h / 2;
-    const inset = 40;
+    const rect = safeRect(w, h);
+    const cx = (rect.left + rect.right) / 2, cy = (rect.top + rect.bottom) / 2;
     const len = Math.hypot(dx, dy) || 1;
     const nx = dx / len, ny = dy / len;
     let t = Infinity;
-    if (nx > 0) t = Math.min(t, (w - inset - cx) / nx);
-    else if (nx < 0) t = Math.min(t, (inset - cx) / nx);
-    if (ny > 0) t = Math.min(t, (h - inset - cy) / ny);
-    else if (ny < 0) t = Math.min(t, (inset - cy) / ny);
-    return { x: cx + nx * t, y: cy + ny * t, ang: Math.atan2(ny, nx) };
+    if (nx > 0) t = Math.min(t, (rect.right - cx) / nx);
+    else if (nx < 0) t = Math.min(t, (rect.left - cx) / nx);
+    if (ny > 0) t = Math.min(t, (rect.bottom - cy) / ny);
+    else if (ny < 0) t = Math.min(t, (rect.top - cy) / ny);
+    return { x: cx + nx * t, y: cy + ny * t, ang: Math.atan2(ny, nx), rect };
 }
 
 onHook('renderScreen', (ctx) => {
@@ -78,7 +105,8 @@ onHook('renderScreen', (ctx) => {
         ctx.fillStyle = '#ffb08a';
         ctx.strokeStyle = 'rgba(0,0,0,0.7)';
         ctx.lineWidth = 3;
-        const lx = p.x - Math.cos(p.ang) * 22, ly = p.y - Math.sin(p.ang) * 22;
+        const lx = Math.max(p.rect.left + 30, Math.min(p.rect.right - 30, p.x - Math.cos(p.ang) * 22));
+        const ly = Math.max(p.rect.top + 10, Math.min(p.rect.bottom - 10, p.y - Math.sin(p.ang) * 22));
         ctx.strokeText(`${d} ~${per}`, lx, ly);
         ctx.fillText(`${d} ~${per}`, lx, ly);
     }

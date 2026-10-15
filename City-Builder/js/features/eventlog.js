@@ -7,7 +7,7 @@ const panel = document.createElement('div');
 panel.id = 'chronicle-panel';
 const header = document.createElement('div');
 header.className = 'chronicle-header';
-header.textContent = 'CHRONICLE';
+header.textContent = 'EVENT LOG';
 const list = document.createElement('div');
 list.id = 'chronicle-list';
 panel.appendChild(header);

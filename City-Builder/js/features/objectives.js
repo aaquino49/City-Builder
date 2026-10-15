@@ -9,6 +9,7 @@ let ownCampsRazed = 0;
 let ownPrevCamps = 0;
 let card = null;
 let lastCardTop = -1;
+let lastRenderKey = null; // currentIndex|collapsed|started — skip DOM writes when unchanged
 
 function positionCard() {
     if (!card) return;
@@ -83,6 +84,11 @@ function ensureCard() {
 
 function renderCard() {
     ensureCard();
+    // uiRefresh fires several times a second; the card content only depends
+    // on these three, so skip the innerHTML/style writes when none changed.
+    const key = `${currentIndex}|${collapsed}|${gameState.started}`;
+    if (key === lastRenderKey) { positionCard(); return; }
+    lastRenderKey = key;
     const done = Math.min(currentIndex, TOTAL);
     card.querySelector('.objectives-title').textContent = `OBJECTIVES  ${done}/${TOTAL}`;
     card.querySelector('.objectives-toggle').textContent = collapsed ? '+' : '–';

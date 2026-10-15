@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check js/main.js && node --check js/core/state.js && node --check js/entities/entities.js && node --check js/core/pathfinding.js && node --check js/ui/ui.js && node --check js/systems/systems.js && node --check js/core/input.js && node --check js/smoke_tests.js && node --check js/features/index.js"
+    "check": "node --check server.js && node --check js/main.js && node --check js/core/state.js && node --check js/entities/entities.js && node --check js/core/pathfinding.js && node --check js/ui/ui.js && node --check js/systems/systems.js && node --check js/core/input.js && node --check js/smoke_tests.js && node --check js/features/index.js && node --check js/features/controls.js && node --check js/features/mechanics.js && node --check js/features/minimap.js && node --check js/features/scoutmarkers.js && node --check js/features/eventlog.js && node --check js/features/rates.js && node --check js/features/seed.js && node --check js/features/chronicle.js && node --check js/features/objectives.js && node --check js/features/market.js && node --check js/features/saveslots.js && node --check js/qa_harness.js"
   },
   "engines": {
     "node": ">=20"

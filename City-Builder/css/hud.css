@@ -134,3 +134,18 @@
 .chip-rate.pos { color: var(--leaf); }
 .chip-rate.neg { color: var(--wine); }
 .chip-rate.flat { color: var(--ink-faint); opacity: 0.7; }
+
+/* WO6 #8: the AUTO-SAVING flash sat over the HEARTH chips of the bottom bar.
+   Park it top-right just below the corner icon buttons instead. The doubled
+   ID selector outranks style.css's #autosave-banner without !important. */
+#game-container #autosave-banner {
+    /* Left of the corner icon buttons — clear of the BUILD menu header */
+    top: 20px;
+    right: 200px;
+    bottom: auto;
+    left: auto;
+    transform: none;
+    font-size: 10px;
+    letter-spacing: 2px;
+    padding: 4px 10px;
+}

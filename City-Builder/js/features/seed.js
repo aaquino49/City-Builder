@@ -9,15 +9,48 @@ function refreshDrawerSeed() {
     if (el && sim.grid) el.textContent = sim.grid.seed || '';
 }
 
-// Regenerate the preview world; only ever before the game starts.
-function regeneratePreview(seed) {
-    if (gameState.started) return;
+// Regenerate the whole world from a seed; always runs (world-gen + caches).
+function regenerateWorld(seed) {
     if (!sim.grid || typeof sim.grid.regenerate !== 'function') return;
     sim.grid.regenerate(seed);
     window.rebuildStructureLists();
     window._buildGrassCache();
     window._buildStaticCache();
     refreshDrawerSeed();
+}
+
+// Regenerate the preview world; only ever before the game starts.
+function regeneratePreview(seed) {
+    if (gameState.started) return;
+    regenerateWorld(seed);
+}
+
+// After a world regen, starter citizens may stand inside a new tree/deposit.
+// Move any citizen on a non-walkable tile to the nearest walkable tile center.
+function relocateCitizensOffBlocked() {
+    const list = window.citizens;
+    const walkable = window.isFriendlyWalkable;
+    if (!Array.isArray(list) || typeof walkable !== 'function' || !sim.grid) return;
+    const T = window.TILE_SIZE || 32;
+    for (const c of list) {
+        const tx = Math.floor(c.x / T), ty = Math.floor(c.y / T);
+        if (walkable(tx, ty)) continue;
+        let found = null;
+        // Ring search radius ≤ 6 around the citizen's tile.
+        for (let r = 1; r <= 6 && !found; r++) {
+            for (let dy = -r; dy <= r && !found; dy++) {
+                for (let dx = -r; dx <= r; dx++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+                    if (walkable(tx + dx, ty + dy)) { found = { tx: tx + dx, ty: ty + dy }; break; }
+                }
+            }
+        }
+        if (!found) continue;
+        const cx = found.tx * T + T / 2, cy = found.ty * T + T / 2;
+        c.x = cx; c.y = cy;
+        c.targetX = cx; c.targetY = cy;
+        c._path = []; c._pathIndex = 0;
+    }
 }
 
 function bindSeedUI() {
@@ -68,20 +101,31 @@ function bindSeedUI() {
     }
 }
 
-// The world boots async (assets); retry until sim.grid exists.
-(function waitForGrid(retries) {
-    if (sim.grid) { bindSeedUI(); return; }
-    if (retries <= 0) return;
-    setTimeout(() => waitForGrid(retries - 1), 250);
-})(40);
+// Listeners don't need the grid, so bind immediately at module load; the
+// seed prefill happens once the world exists (see the __initDone poll below).
+bindSeedUI();
+
+// The world boots async (assets); prefill the input once boot is done.
+(function waitForInit(triesLeft) {
+    if (window.__initDone) {
+        const input = seedInput();
+        if (input && !input.value && sim.grid) input.value = sim.grid.seed || '';
+        refreshDrawerSeed();
+        return;
+    }
+    if (triesLeft <= 0) return;
+    setTimeout(() => waitForInit(triesLeft - 1), 50);
+})(200); // 50 ms × 200 = max 10 s
 
 onHook('newGame', () => {
-    // Regenerate first if the typed seed differs (starter citizens stand at
-    // the center, which world-gen keeps clear, so this is safe).
+    // newGame fires right AFTER main.js sets gameState.started = true, so the
+    // preview guard would ignore a typed seed — regenerate unconditionally.
     const input = seedInput();
     const typed = input ? input.value.trim().toUpperCase() : '';
-    if (typed && sim.grid && typed !== sim.grid.seed) regeneratePreview(typed);
-    else refreshDrawerSeed();
+    if (typed && sim.grid && typed !== sim.grid.seed) {
+        regenerateWorld(typed);
+        relocateCitizensOffBlocked();
+    } else refreshDrawerSeed();
     if (input && sim.grid) input.value = sim.grid.seed || '';
 });
 
