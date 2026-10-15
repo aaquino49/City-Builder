@@ -495,6 +495,7 @@ export const sim = {
     camera: null,
     assets: null,
     raidPathBudget: 15,
+    eventLog: [],
 };
 
 window.sim = sim;
