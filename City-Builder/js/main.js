@@ -14,6 +14,7 @@ import {
     getStructureAt,
     JOB_SCAN_INTERVAL,
     sim,
+    runHook,
 } from './core/state.js';
 import './core/utils.js';
 import './core/pathfinding.js';
@@ -23,6 +24,7 @@ import { patchStaticCache, showModal, triggerVictory, updateCombatModeUI, update
 import './core/input.js';
 import { runSmokeTests } from './smoke_tests.js';
 import './qa_harness.js';
+import './features/index.js';
 
 // Debug tooling (FPS counter, smoke tests) is opt-in via ?debug
 const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
@@ -788,6 +790,7 @@ function beginScoutPhase() {
         `${_raidPlan.size} raiders${compStr} from the ${_raidPlan.dirs.join('/')} — close your gates!`);
     playRaidWarningSFX();
     sim.raidWarningPlayed = true;
+    runHook('scoutStart', _raidPlan);
 }
 
 function startRaidWave() {
@@ -816,6 +819,7 @@ function startRaidWave() {
     for (const spawn of plan.spawns) {
         raiders.push(new Raider(spawn.x, spawn.y, spawn.type));
     }
+    runHook('raidStart', plan);
 }
 
 function updateRaiders(dtSec) {
@@ -1036,6 +1040,7 @@ function _clearRaidAftermath() {
     activeProjectiles.length = 0;
     particles.length = 0;
     Object.keys(towerFireTimers).forEach(k => delete towerFireTimers[k]);
+    runHook('raidEnd');
 }
 
 document.getElementById('modal-continue').addEventListener('click', () => {
@@ -1352,6 +1357,7 @@ function update(dtMs) {
         sim.camera.x = Math.max(0, Math.min(maxCameraX, sim.camera.x));
         sim.camera.y = Math.max(0, Math.min(maxCameraY, sim.camera.y));
     }
+    if (gameState.started) runHook('frame', _dtReal);
     if (!gameState.started || sim.gameIsPaused || sim.userPaused) return;
     const dtSec = (dtMs / 1000) * sim.timeScale;
     sim.griefPenalty = Math.max(0, sim.griefPenalty - dtSec * 0.25);
@@ -1637,6 +1643,7 @@ function update(dtMs) {
         const banner = document.getElementById('defeat-warning');
         if (banner) banner.classList.add('hidden');
     }
+    runHook('update', dtSec);
 }
 
 
@@ -1736,6 +1743,7 @@ document.getElementById('btn-start').addEventListener('click', () => {
     if (window.updateTimePauseUI) window.updateTimePauseUI();
     lastTime = 0;
     showTutorial(); // Show tutorial on game start
+    runHook('newGame');
 });
 
 // --- Milestone 20 Event Listeners ---

@@ -214,6 +214,42 @@ export function spawnParticle(x, y, type, duration = 0.4, text = null, color = n
     return p;
 }
 
+// Feature hooks — feature modules (js/features/*.js) register callbacks here so
+// they can join the loop/render/save/raid lifecycle without editing core files.
+export const hooks = {
+    update: [],        // (dtSec) — every simulation tick while the game is running (not paused)
+    frame: [],         // (dtRealSec) — every frame, even while paused (UI/camera work)
+    renderWorld: [],   // (ctx) — world-space drawing, called inside the camera transform
+    renderScreen: [],  // (ctx) — screen-space drawing, identity transform, after all world drawing
+    save: [],          // (data) — mutate the save object before it is written (use data.ext.<feature>)
+    load: [],          // (data) — after a save has been fully applied (data.ext may be undefined)
+    newGame: [],       // () — the player pressed START on a fresh game
+    scoutStart: [],    // (plan) — scout warning began; plan = { waveNum, size, dirs, torch, siege }
+    raidStart: [],     // (plan) — raid wave spawned
+    raidEnd: [],       // () — post-raid cleanup ran (_clearRaidAftermath)
+    uiRefresh: [],     // () — refreshUI() ran (resource bar / build menu updated)
+};
+export function onHook(name, fn) {
+    if (!hooks[name]) throw new Error(`Unknown hook: ${name}`);
+    hooks[name].push(fn);
+}
+// A failing feature must never break the core game — log once per hook name per second.
+const _hookErrTime = {};
+export function runHook(name, ...args) {
+    const list = hooks[name];
+    if (!list) return;
+    for (const fn of list) {
+        try { fn(...args); }
+        catch (err) {
+            const now = performance.now();
+            if (!_hookErrTime[name] || now - _hookErrTime[name] > 1000) {
+                _hookErrTime[name] = now;
+                console.error(`[Pixel Dominion] hook "${name}" error:`, err);
+            }
+        }
+    }
+}
+
 // Bind constants to window
 Object.assign(window, {
     TILE_SIZE, GRID_WIDTH, GRID_HEIGHT, BUILDINGS, TREE_DEF,
@@ -225,7 +261,8 @@ Object.assign(window, {
     TIER2_UPGRADES, UNIT_BALANCE, ECONOMY_BALANCE, PRODUCTION_BALANCE, COMBAT_BALANCE,
     DIFFICULTY_PRESETS, DEFAULT_DIFFICULTY_KEY,
     PROJECTILE_POOL, PARTICLE_POOL, VISUAL_PROJECTILE_POOL, getPooledProjectile, releaseProjectile,
-    getPooledParticle, releaseParticle, getPooledVisualProjectile, releaseVisualProjectile, spawnParticle
+    getPooledParticle, releaseParticle, getPooledVisualProjectile, releaseVisualProjectile, spawnParticle,
+    hooks, onHook, runHook
 });
 
 // ===================== STATE DECLARES =====================
@@ -637,6 +674,7 @@ export function saveGame(slotKey = SAVE_KEY) {
             }
         }
     }
+    data.ext = {}; runHook('save', data);
     localStorage.setItem(slotKey, JSON.stringify(data));
     console.log(`[Pixel Dominion] Game saved (${slotKey === MANUAL_SAVE_KEY ? 'manual slot' : 'autosave slot'}).`);
 }
@@ -874,6 +912,7 @@ export function loadGame(slotKey = SAVE_KEY) {
     sim.raidWaveSize = d.raidWaveSize ?? 0;
     if (window._setRaidersDefeatedAtWaveStart) window._setRaidersDefeatedAtWaveStart(gameState.raidersDefeated || 0);
     if (sim.raidActive && window.sendCitizensToHide) window.sendCitizensToHide();
+    runHook('load', d);
     refreshUI();
     if (window.updateTimePauseUI) window.updateTimePauseUI();
     updateRaidHUD();

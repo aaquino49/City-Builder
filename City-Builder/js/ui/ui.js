@@ -1,5 +1,6 @@
 import {
     sim,
+    runHook,
 } from '../core/state.js';
 
 // Pixel Dominion — UI & Renderer Module
@@ -1343,6 +1344,7 @@ export function refreshUI() {
     gameState.defense = calcDefense();
     updateResourceUI();
     updateBuildMenu();
+    runHook('uiRefresh');
 }
 
 // Build item click (event delegation on container)
@@ -1734,6 +1736,7 @@ export function renderWorldOverlay() {
         }
     }
 
+    runHook('renderWorld', ctx);
     ctx.restore();
 }
 
@@ -1817,6 +1820,7 @@ function render() {
         }
         ctx.globalAlpha = 1.0;
     }
+    ctx.setTransform(1, 0, 0, 1, 0, 0); runHook('renderScreen', ctx);
 }
 
 
