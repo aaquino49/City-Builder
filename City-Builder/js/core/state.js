@@ -417,6 +417,7 @@ export const sim = {
     overlayAlpha: 0,
     raidQueued: false,
     griefPenalty: 0,
+    moraleModifier: 0,
     happinessFactors: [],
     combatMode: 'defend',
     diplomacyTimers: [],
@@ -442,6 +443,7 @@ export const sim = {
     raidActiveTimer: 0,
     raidBuildingsDestroyed: 0,
     raidCitizensKilled: 0,
+    raidWaveSize: 0,
     gameIsPaused: false,
     raidWarningPlayed: false,
     raidWarningSpawnCount: 0,
@@ -574,8 +576,8 @@ export function saveGame(slotKey = SAVE_KEY) {
         population: gameState.population, food: gameState.food, happiness: gameState.happiness,
         difficulty: gameState.difficulty,
         wood: gameState.wood, stone: gameState.stone, iron: gameState.iron,
-        raidTimer: sim.raidTimer, raidStrength: sim.raidStrength, raidCount: sim.raidCount, _scoutTimer: sim.scoutTimer, _scoutPhase: sim.scoutPhase, _raidQueued: sim.raidQueued, _dayPhase: sim.dayPhase, _griefPenalty: sim.griefPenalty, _combatMode: sim.combatMode,
-        raidActive: sim.raidActive, raidActiveTimer: sim.raidActiveTimer, raidBuildingsDestroyed: sim.raidBuildingsDestroyed, raidCitizensKilled: sim.raidCitizensKilled,
+        raidTimer: sim.raidTimer, raidStrength: sim.raidStrength, raidCount: sim.raidCount, _scoutTimer: sim.scoutTimer, _scoutPhase: sim.scoutPhase, _raidQueued: sim.raidQueued, _dayPhase: sim.dayPhase, _griefPenalty: sim.griefPenalty, _moraleModifier: sim.moraleModifier, _combatMode: sim.combatMode,
+        raidActive: sim.raidActive, raidActiveTimer: sim.raidActiveTimer, raidBuildingsDestroyed: sim.raidBuildingsDestroyed, raidCitizensKilled: sim.raidCitizensKilled, raidWaveSize: sim.raidWaveSize,
         _allianceTimer: sim.allianceTimer, _soldierCostMult: sim.soldierCostMult, _soldierCostTimer: sim.soldierCostTimer,
         diplomacyTimers: sim.diplomacyTimers.map(t => ({ remainingSec: t.remainingSec, actionKey: t.actionKey })),
         dayTimer: sim.dayTimer, day: gameState.day, season: gameState.season,
@@ -600,7 +602,8 @@ export function saveGame(slotKey = SAVE_KEY) {
         droughtActive: sim.droughtActive, strikeActive: sim.strikeActive,
         merchantNPC: sim.merchantNPC ? {
             x: sim.merchantNPC.x, y: sim.merchantNPC.y, startX: sim.merchantNPC.startX, startY: sim.merchantNPC.startY,
-            speed: sim.merchantNPC.speed, state: sim.merchantNPC.state, _tradeOpened: sim.merchantNPC._tradeOpened
+            speed: sim.merchantNPC.speed, state: sim.merchantNPC.state, _tradeOpened: sim.merchantNPC._tradeOpened,
+            deals: sim.merchantNPC.deals
         } : null,
         upgrades: gameState.upgrades,
         activeResearch: gameState.activeResearch,
@@ -696,6 +699,7 @@ export function loadGame(slotKey = SAVE_KEY) {
     });
     sim.dayPhase = d._dayPhase ?? getDayPhaseFn(sim.dayTimer);
     sim.griefPenalty = d._griefPenalty ?? 0;
+    sim.moraleModifier = d._moraleModifier ?? 0;
     sim.combatMode = d._combatMode ?? 'defend';
     sim.allianceTimer = d._allianceTimer ?? 0;
     sim.soldierCostMult = d._soldierCostMult ?? 1.0;
@@ -776,6 +780,7 @@ export function loadGame(slotKey = SAVE_KEY) {
         npc.speed = d.merchantNPC.speed;
         npc.state = d.merchantNPC.state;
         npc._tradeOpened = d.merchantNPC._tradeOpened;
+        npc.deals = d.merchantNPC.deals ?? null;
         sim.merchantNPC = npc;
     } else {
         sim.merchantNPC = null;
@@ -866,6 +871,7 @@ export function loadGame(slotKey = SAVE_KEY) {
     sim.raidActiveTimer = d.raidActiveTimer ?? 0;
     sim.raidBuildingsDestroyed = d.raidBuildingsDestroyed ?? 0;
     sim.raidCitizensKilled = d.raidCitizensKilled ?? 0;
+    sim.raidWaveSize = d.raidWaveSize ?? 0;
     if (window._setRaidersDefeatedAtWaveStart) window._setRaidersDefeatedAtWaveStart(gameState.raidersDefeated || 0);
     if (sim.raidActive && window.sendCitizensToHide) window.sendCitizensToHide();
     refreshUI();

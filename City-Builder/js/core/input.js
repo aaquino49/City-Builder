@@ -41,19 +41,17 @@ window.addEventListener('keydown', e => {
         return;
     }
     if (e.key.toLowerCase() === 'm') {
-        window._volMusic = window._volMusic > 0 ? 0 : 70;
+        const next = window.getVolume('music') > 0 ? 0 : 70;
+        window.setVolume('music', next);
         const musicEl = document.getElementById('vol-music');
-        if (musicEl) musicEl.value = window._volMusic;
-        if (window._applyVolumes) window._applyVolumes();
-        if (window._saveSettings) window._saveSettings();
+        if (musicEl) musicEl.value = next;
         return;
     }
     if (e.key.toLowerCase() === 'n') {
-        window._volSfx = window._volSfx > 0 ? 0 : 100;
+        const next = window.getVolume('sfx') > 0 ? 0 : 100;
+        window.setVolume('sfx', next);
         const sfxEl = document.getElementById('vol-sfx');
-        if (sfxEl) sfxEl.value = window._volSfx;
-        if (window._applyVolumes) window._applyVolumes();
-        if (window._saveSettings) window._saveSettings();
+        if (sfxEl) sfxEl.value = next;
         return;
     }
     if (e.key === ' ' && !sim.gameIsPaused) {
@@ -66,6 +64,11 @@ window.addEventListener('keydown', e => {
 
 window.addEventListener('keyup', e => {
     window.keys[e.key.toLowerCase()] = false;
+});
+
+// Stuck keys on alt-tab kept panning the camera — clear on focus loss
+window.addEventListener('blur', () => {
+    for (const k in window.keys) window.keys[k] = false;
 });
 
 // ===================== MOUSE =====================

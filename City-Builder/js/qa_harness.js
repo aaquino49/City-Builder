@@ -217,6 +217,15 @@ function testPathfinding() {
 function testRegressionBugs() {
     const { TILE_SIZE, BUILDINGS } = window;
     const results = {};
+    // Freeze random incidents — a modal mid-test pauses the sim and flakes checks.
+    let _qaIncidentActive = null, _qaIncidentTimer = null;
+    if (sim.incidentManager) {
+        _qaIncidentActive = sim.incidentManager.active;
+        _qaIncidentTimer = sim.incidentManager._nextTimer;
+        sim.incidentManager.active = null;
+        sim.incidentManager._nextTimer = 1e9;
+    }
+    sim.gameIsPaused = false;
 
     const maxR = (sim.currentTerritoryRadius + 1) * TILE_SIZE;
     const centerX = 32.5 * TILE_SIZE;
@@ -242,6 +251,9 @@ function testRegressionBugs() {
         // (34, 35) is well inside the 10-tile leash; (6, 6) is far outside it.
         const testRaider = new window.Raider(34 * TILE_SIZE, 35 * TILE_SIZE, 'normal');
         const farRaider = new window.Raider(6 * TILE_SIZE, 6 * TILE_SIZE, 'normal');
+        // They must survive so the raid can't resolve mid-test.
+        testRaider.hp = testRaider.maxHp = 1e6;
+        farRaider.hp = farRaider.maxHp = 1e6;
         window.raiders.push(testRaider);
         const testSoldier = new window.Soldier(35 * TILE_SIZE, 35 * TILE_SIZE);
         const testKnight = new window.Knight(35 * TILE_SIZE, 36 * TILE_SIZE);
@@ -266,6 +278,7 @@ function testRegressionBugs() {
         window.soldiers.pop(); window.knights.pop();
         window.raiders.length = 0;
         sim.raidActive = false;
+        document.getElementById('raid-modal')?.classList.remove('open'); sim.gameIsPaused = false;
     }
 
     // Defend-mode archers should man gate approaches while idle, then favor the
@@ -471,6 +484,10 @@ function testRegressionBugs() {
     results.monumentGetsBuilder = !!builder;
     results.monumentProgresses = (sim.grid.structures[ty]?.[tx]?.progress ?? 0) > 0;
 
+    if (sim.incidentManager) {
+        sim.incidentManager.active = _qaIncidentActive;
+        sim.incidentManager._nextTimer = _qaIncidentTimer;
+    }
     return results;
 }
 

@@ -1487,6 +1487,7 @@ export class MerchantNPC {
         this.speed = 0.8; // tiles/sec
         this.state = 'approaching';
         this._tradeOpened = false;
+        this.deals = null;
     }
 
     update(dtSec) {
@@ -1531,6 +1532,7 @@ export class Raider {
         this.type = type;
         this.state = 'walking';
         this.hp = type === 'siege' ? 150 : 100;
+        this.maxHp = this.hp;
         this._alpha = 1.0;
         this._rotation = 0; // victory-spin animation (main.js updateEffects) — do not repurpose
         this._victoryTimer = 0;

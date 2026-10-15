@@ -698,10 +698,23 @@ function openBuildingPanel(tx, ty) {
     } else if (bKey === 'barracks') {
         const solCost = Math.round((window.UNIT_BALANCE?.soldier?.goldCost ?? 40) * (sim.soldierCostMult || 1));
         statsLines.push(`Trains soldiers (${solCost}G)`);
-        statsLines.push(`Soldier HP: ${isT2 ? 125 : 100}`);
+        // Same bonus stack as main.js trainSoldier so the panel never goes stale.
+        let _solHp = window.UNIT_BALANCE?.soldier?.baseHp ?? 100;
+        if (gameState.upgrades?.iron_discipline) _solHp += window.UNIT_BALANCE?.soldier?.ironDisciplineHpBonus ?? 25;
+        if (isT2) _solHp += window.UNIT_BALANCE?.soldier?.barracksTier2HpBonus ?? 25;
+        statsLines.push(`Soldier HP: ${_solHp}`);
     } else if (bKey === 'tower') {
-        statsLines.push(`Range: ${isT2 ? 10 : 8} tiles`);
-        statsLines.push(`Damage: ${isT2 ? 30 : 25} / shot`);
+        const _towerCB = window.COMBAT_BALANCE?.tower;
+        statsLines.push(`Range: ${isT2 ? (_towerCB?.tier2RangeTiles ?? 10) : (_towerCB?.rangeTiles ?? 8)} tiles`);
+        statsLines.push(`Damage: ${isT2 ? (_towerCB?.tier2Damage ?? 20) : (_towerCB?.damage ?? 15)} / shot`);
+    } else if (bKey === 'ballista_tower') {
+        const _bt = (sim.activeBallistaTowers || []).find(e => e.tx === tx && e.ty === ty);
+        const _bRange = _bt?.range ?? 16;
+        const _bDmg = _bt?.damage ?? 75;
+        const _bInt = window.COMBAT_BALANCE?.ballista?.fireIntervalSec ?? 8.0;
+        statsLines.push(`Range: ${_bRange} tiles`);
+        statsLines.push(`Damage: ${_bDmg} / bolt`);
+        statsLines.push(`Fires every ${_bInt}s`);
     } else if (bKey === 'house') {
         statsLines.push(`Housing: +${s.def.housing || 4}`);
     } else if (bKey === 'tavern') {
@@ -902,6 +915,10 @@ export function triggerVictory(reason = 'default') {
         wave10: {
             subtitle: 'Wave 10 has broken against your defenses. The final raid is survived.',
             condition: 'Wave 10 survived',
+        },
+        wave10_breached: {
+            subtitle: 'The final raid breached your walls, yet your dominion endures.',
+            condition: 'Wave 10 endured',
         },
         default: {
             subtitle: 'Your dominion stands triumphant.',
@@ -1268,25 +1285,25 @@ function updateBuildMenu() {
                 const html = `<span class="build-cost-gold">◈ ${solCost}</span>`;
                 if (costsEl.dataset.cache !== html) { costsEl.dataset.cache = html; costsEl.innerHTML = html; }
             }
-            const c = !(gameState.gold >= solCost && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
+            const c = !(gameState.gold >= solCost && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle'));
             btn.disabled = c; btn.classList.toggle('disabled', c); return;
         }
         if (tool === 'train_archer') {
             const archCost = window.UNIT_BALANCE?.archer?.goldCost ?? 40;
-            const c = !(gameState.gold >= archCost && countBuildings('archery_range') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
+            const c = !(gameState.gold >= archCost && countBuildings('archery_range') > 0 && citizens.some(ci => ci.job === 'idle'));
             btn.disabled = c; btn.classList.toggle('disabled', c); return;
         }
         if (tool === 'train_knight') {
             const kGold = window.UNIT_BALANCE?.knight?.goldCost ?? 60;
             const kIron = window.UNIT_BALANCE?.knight?.ironCost ?? 20;
-            const c = !(gameState.gold >= kGold && gameState.iron >= kIron && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
+            const c = !(gameState.gold >= kGold && gameState.iron >= kIron && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle'));
             btn.disabled = c; btn.classList.toggle('disabled', c); return;
         }
         if (tool === 'train_captain') {
             const cGold = window.UNIT_BALANCE?.captain?.goldCost ?? 150;
             const cIron = window.UNIT_BALANCE?.captain?.ironCost ?? 30;
             const hasCaptain = soldiers.some(s => s.isCaptain);
-            const c = hasCaptain || !(gameState.gold >= cGold && gameState.iron >= cIron && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle' && ci.state !== 'walking'));
+            const c = hasCaptain || !(gameState.gold >= cGold && gameState.iron >= cIron && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle'));
             btn.disabled = c; btn.classList.toggle('disabled', c);
             const yieldEl = btn.querySelector('.build-item-yield');
             if (yieldEl) {
@@ -1707,7 +1724,7 @@ export function renderWorldOverlay() {
             ctx.stroke();
         }
         ctx.restore();
-        const _rMaxHp = r.type === 'siege' ? 150 : 100;
+        const _rMaxHp = r.maxHp || (r.type === 'siege' ? 150 : 100);
         if (r.state === 'walking' && r.hp < _rMaxHp) {
             const bw = 16;
             ctx.fillStyle = '#333333';
@@ -1719,6 +1736,8 @@ export function renderWorldOverlay() {
 
     ctx.restore();
 }
+
+let _lastSnowTime = 0;
 
 function render() {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1770,6 +1789,11 @@ function render() {
     // Snow overlay — screen-space, always updated but only drawn in Winter
     if (sim.snowParticles.length > 0) {
         const _drawSnow = SEASON_MODIFIERS[SEASONS.indexOf(gameState.season)].snowOverlay;
+        // Time-based fall so speed is identical at any frame rate; frozen while paused
+        const now = performance.now();
+        const dt = Math.min(0.1, (now - _lastSnowTime) / 1000);
+        _lastSnowTime = now;
+        const _snowPaused = sim.userPaused || sim.gameIsPaused;
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         for (let i = 0; i < sim.snowParticles.length; i++) {
             const p = sim.snowParticles[i];
@@ -1780,12 +1804,16 @@ function render() {
                 ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
                 ctx.fill();
             }
-            p.y += p.speed;
-            p.x += p.drift;
+            if (!_snowPaused) {
+                p.y += p.speed * dt * 60;
+                p.x += p.drift * dt * 60;
+            }
             if (p.y > canvas.height) {
                 p.y = -4;
                 p.x = Math.random() * canvas.width;
             }
+            if (p.x < -4) p.x = canvas.width + 4;
+            else if (p.x > canvas.width + 4) p.x = -4;
         }
         ctx.globalAlpha = 1.0;
     }
@@ -2149,6 +2177,14 @@ function calcHappiness() {
         score -= sim.griefPenalty;
         const griefSigns = sim.griefPenalty > 10 ? '---' : sim.griefPenalty > 5 ? '--' : '-';
         sim.happinessFactors.push({ label: 'Grief', signs: griefSigns, polarity: 'neg' });
+    }
+
+    // Recent events (decaying morale modifier from diplomacy choices)
+    if (Math.abs(sim.moraleModifier) >= 0.5) {
+        score += sim.moraleModifier;
+        const m = sim.moraleModifier;
+        const moraleSigns = m >= 12 ? '+++' : m >= 5 ? '++' : m > 0 ? '+' : m <= -12 ? '---' : m <= -5 ? '--' : '-';
+        sim.happinessFactors.push({ label: 'Recent Events', signs: moraleSigns, polarity: m > 0 ? 'pos' : 'neg' });
     }
 
     // Fire penalty (count active fires from incidentManager)

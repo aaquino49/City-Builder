@@ -227,7 +227,7 @@ class IncidentManager {
     }
 
     _updateDrought(dtSec) {
-        gameState.happiness = Math.max(0, gameState.happiness - dtSec);
+        // No direct happiness drain — calcHappiness already applies a Drought factor.
     }
 
     _updateMerchant(dtSec) {
@@ -300,6 +300,21 @@ function scheduleDiplomacyAction(actionKey, delayDays) {
     sim.diplomacyTimers.push({ remainingSec: delayDays * DAY_DURATION, actionKey, action });
 }
 
+// Decaying morale modifier so event happiness effects survive the 5s tax-tick
+// recompute (calcHappiness reads it back) instead of being overwritten.
+function adjustMorale(delta) {
+    sim.moraleModifier = Math.max(-30, Math.min(30, sim.moraleModifier + delta));
+    gameState.happiness = calcHappiness();
+}
+
+// Levy helper: removes up to n non-captain soldiers (from the end) so the
+// unique Captain can never be conscripted away by diplomacy choices.
+function _removeRegularSoldiers(n) {
+    for (let i = soldiers.length - 1; i >= 0 && n > 0; i--) {
+        if (!soldiers[i].isCaptain) { soldiers.splice(i, 1); n--; }
+    }
+}
+
 const _DIPLOMACY_POOL = [
     {
         id: 'grain_trade',
@@ -313,17 +328,18 @@ const _DIPLOMACY_POOL = [
     {
         id: 'soldier_levy',
         description: 'Your brother the western king needs soldiers to hold the frontier.',
-        guard: () => soldiers.length >= 10,
+        guard: () => soldiers.filter(s => !s.isCaptain).length >= 10,
         optionA: { label: 'Send Soldiers',    cost: '−10 Soldiers (14 days)  +200 Gold',
             apply: () => {
-                soldiers.splice(0, 10);
+                _removeRegularSoldiers(10);
                 gameState.gold += 200;
                 scheduleDiplomacyAction('return_soldiers_10', 14);
+                window.markUIDirty();
                 // Proxy marks UI dirty on gameState.gold write; flushUI() syncs next frame
             }
         },
         optionB: { label: 'Decline',          cost: '−10 Happiness',
-            apply: () => { gameState.happiness = Math.max(0, gameState.happiness - 10); } },
+            apply: () => { adjustMorale(-10); } },
     },
     {
         id: 'noble_refuge',
@@ -341,7 +357,7 @@ const _DIPLOMACY_POOL = [
             }
         },
         optionB: { label: 'Refuse',           cost: '−5 Happiness',
-            apply: () => { gameState.happiness = Math.max(0, gameState.happiness - 5); } },
+            apply: () => { adjustMorale(-5); } },
     },
     {
         id: 'safe_passage',
@@ -350,7 +366,7 @@ const _DIPLOMACY_POOL = [
         optionA: { label: 'Grant Passage',    cost: '+80 Gold  −5 Happiness',
             apply: () => {
                 gameState.gold += 80;
-                gameState.happiness = Math.max(0, gameState.happiness - 5);
+                adjustMorale(-5);
             } },
         optionB: { label: 'Deny',             cost: 'Raid in 2 days',
             apply: () => scheduleDiplomacyAction('raid', 2) },
@@ -419,7 +435,7 @@ const _DIPLOMACY_POOL = [
             apply: () => {
                 gameState.food = Math.min(gameState.food + 30, getFoodCap());
                 gameState.wood += 10;
-                gameState.happiness = Math.max(0, gameState.happiness - 10);
+                adjustMorale(-10);
             }
         },
     },
@@ -438,7 +454,7 @@ const _DIPLOMACY_POOL = [
         guard: () => true,
         optionA: { label: 'Allow Performance', cost: '+15 Happiness  −10 Food',
             apply: () => {
-                gameState.happiness = Math.min(100, gameState.happiness + 15);
+                adjustMorale(15);
                 gameState.food = Math.max(0, gameState.food - 10);
             }
         },
@@ -451,12 +467,12 @@ const _DIPLOMACY_POOL = [
         optionA: { label: 'Participate',      cost: '−30 Food  +20 Happiness',
             apply: () => {
                 gameState.food = Math.max(0, gameState.food - 30);
-                gameState.happiness = Math.min(100, gameState.happiness + 20);
+                adjustMorale(20);
                 _dFlags().festival_friend = true; // chain: village_gift
             }
         },
         optionB: { label: 'Decline',          cost: '−8 Happiness',
-            apply: () => { gameState.happiness = Math.max(0, gameState.happiness - 8); } },
+            apply: () => { adjustMorale(-8); } },
     },
     {
         id: 'flood_warning',
@@ -470,18 +486,19 @@ const _DIPLOMACY_POOL = [
     {
         id: 'royal_decree',
         description: 'The distant king demands soldiers for his military campaign.',
-        guard: () => soldiers.length >= 5,
+        guard: () => soldiers.filter(s => !s.isCaptain).length >= 5,
         optionA: { label: 'Comply',           cost: '−5 Soldiers (10 days)  +300 Gold  +10 Happiness',
             apply: () => {
-                soldiers.splice(0, 5);
+                _removeRegularSoldiers(5);
                 gameState.gold += 300;
-                gameState.happiness = Math.min(100, gameState.happiness + 10);
+                adjustMorale(10);
                 scheduleDiplomacyAction('return_soldiers_5', 10);
+                window.markUIDirty();
                 // Proxy marks UI dirty on gold/happiness writes; flushUI() syncs next frame
             }
         },
         optionB: { label: 'Refuse',           cost: '−8 Happiness',
-            apply: () => { gameState.happiness = Math.max(0, gameState.happiness - 8); } },
+            apply: () => { adjustMorale(-8); } },
     },
     // --- Chain follow-ups (unlocked by earlier choices) ---
     {
@@ -521,7 +538,7 @@ const _DIPLOMACY_POOL = [
             }
         },
         optionB: { label: 'Share With Folk',  cost: '+10 Happiness',
-            apply: () => { _dFlags().village_thanked = true; gameState.happiness = Math.min(100, gameState.happiness + 10); } },
+            apply: () => { _dFlags().village_thanked = true; adjustMorale(10); } },
     },
     {
         id: 'plague_refugees',
@@ -534,7 +551,7 @@ const _DIPLOMACY_POOL = [
                 citizens.push(new Citizen(cx, cy));
                 gameState.population += 2;
                 gameState.gold += 40;
-                gameState.happiness = Math.max(0, gameState.happiness - 8);
+                adjustMorale(-8);
                 // Proxy marks UI dirty on population/gold/happiness writes; flushUI() syncs next frame
             }
         },
@@ -594,6 +611,24 @@ function _loadSettings() {
     const muteIcon = document.getElementById('btn-mute-icon');
     if (muteBtn)  muteBtn.textContent  = _audioMuted ? '♪ UNMUTE' : '♪ MUTE';
     if (muteIcon) muteIcon.textContent = _audioMuted ? '✕' : '♪';
+}
+
+function setVolume(kind, value) {
+    // Single entry point so sliders/hotkeys always hit the module variables
+    const v = Math.max(0, Math.min(100, Number(value) || 0));
+    if (kind === 'master') _volMaster = v;
+    else if (kind === 'music') _volMusic = v;
+    else if (kind === 'sfx') _volSfx = v;
+    else return;
+    _applyVolumes();
+    _saveSettings();
+}
+
+function getVolume(kind) {
+    if (kind === 'master') return _volMaster;
+    if (kind === 'music') return _volMusic;
+    if (kind === 'sfx') return _volSfx;
+    return 0;
 }
 
 // Music scheduler state
@@ -1147,35 +1182,50 @@ function updateStatsOverlay() {
 // Trade modal
 const _TRADE_POOL = [
     { label: 'Buy 50 Wood',     cost: '-30 Gold',           canDo: gs => gs.gold >= 30,             apply: gs => { gs.gold -= 30;  gs.wood += 50; } },
-    { label: 'Sell 20 Iron',    cost: '+80 Gold  -20 Iron', canDo: gs => gs.iron >= 20,             apply: gs => { gs.gold += 80;  gs.iron -= 20; } },
+    { label: 'Sell 20 Iron',    cost: '+60 Gold  -20 Iron', canDo: gs => gs.iron >= 20,             apply: gs => { gs.gold += 60;  gs.iron -= 20; } },
     { label: 'Buy 100 Food',    cost: '-40 Gold',           canDo: gs => gs.gold >= 40,             apply: gs => { gs.gold -= 40;  gs.food += 100; gs.food = Math.min(gs.food, getFoodCap()); } },
     { label: 'Buy 30 Stone',    cost: '-25 Gold',           canDo: gs => gs.gold >= 25,             apply: gs => { gs.gold -= 25;  gs.stone += 30; } },
-    { label: 'Sell 30 Wood',    cost: '+20 Gold  -30 Wood', canDo: gs => gs.wood >= 30,             apply: gs => { gs.gold += 20;  gs.wood -= 30; } },
-    { label: 'Buy 50 Iron',     cost: '-60 Gold',           canDo: gs => gs.gold >= 60,             apply: gs => { gs.gold -= 60;  gs.iron += 50; } },
-    { label: 'Sell 5 Iron',     cost: '+25 Gold  -5 Iron',  canDo: gs => gs.iron >= 5,              apply: gs => { gs.gold += 25;  gs.iron -= 5; } },
+    { label: 'Sell 30 Wood',    cost: '+15 Gold  -30 Wood', canDo: gs => gs.wood >= 30,             apply: gs => { gs.gold += 15;  gs.wood -= 30; } },
+    { label: 'Buy 25 Iron',     cost: '-100 Gold',          canDo: gs => gs.gold >= 100,            apply: gs => { gs.gold -= 100; gs.iron += 25; } },
+    { label: 'Sell 5 Iron',     cost: '+15 Gold  -5 Iron',  canDo: gs => gs.iron >= 5,              apply: gs => { gs.gold += 15;  gs.iron -= 5; } },
     { label: 'Buy Provisions',  cost: '-50 Gold  +50 Food +20 Wood', canDo: gs => gs.gold >= 50,   apply: gs => { gs.gold -= 50;  gs.food += 50; gs.food = Math.min(gs.food, getFoodCap()); gs.wood += 20; } },
 ];
 
 function openTradeModal() {
-    const shuffled = [..._TRADE_POOL].sort(() => Math.random() - 0.5);
-    const deals = shuffled.slice(0, 3);
+    // Deals are chosen once per merchant visit so reopening can't re-roll them.
+    let deals;
+    if (sim.merchantNPC) {
+        if (!sim.merchantNPC.deals) {
+            const idxs = [..._TRADE_POOL.keys()].sort(() => Math.random() - 0.5).slice(0, 3);
+            sim.merchantNPC.deals = idxs.map(idx => ({ idx, done: false }));
+        }
+        deals = sim.merchantNPC.deals;
+    } else {
+        const shuffled = [..._TRADE_POOL.keys()].sort(() => Math.random() - 0.5);
+        deals = shuffled.slice(0, 3).map(idx => ({ idx, done: false }));
+    }
     const dealsEl = document.getElementById('trade-deals');
     if (!dealsEl) return;
-    dealsEl.innerHTML = deals.map((d, i) => `
+    dealsEl.innerHTML = deals.map((e, i) => {
+        const d = _TRADE_POOL[e.idx];
+        return `
         <div class="trade-deal-row">
-            <button class="trade-deal-btn" data-deal="${i}">ACCEPT</button>
+            <button class="trade-deal-btn" data-deal="${i}"${e.done ? ' disabled' : ''}>${e.done ? 'DONE' : 'ACCEPT'}</button>
             <div class="trade-deal-info">
                 <div class="trade-deal-label">${d.label}</div>
                 <div class="trade-deal-cost">${d.cost}</div>
             </div>
-        </div>`).join('');
+        </div>`;
+    }).join('');
     document.querySelectorAll('.trade-deal-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const idx = parseInt(btn.dataset.deal);
-            const deal = deals[idx];
-            if (!deal) return;
+            const entry = deals[idx];
+            const deal = entry && _TRADE_POOL[entry.idx];
+            if (!deal || entry.done) return;
             if (deal.canDo(gameState)) {
                 deal.apply(gameState);
+                entry.done = true;
                 btn.textContent = 'DONE'; btn.disabled = true;
                 // Proxy marks UI dirty on any gameState resource mutation; flushUI() syncs next frame
             } else {
@@ -1238,10 +1288,11 @@ export function _getDayPhase(t) {
 // Bind to window for global legacy compatibility
 Object.assign(window, {
     getMaxHP, IncidentManager, _DIPLOMACY_ACTION_MAP, _DIPLOMACY_POOL,
+    adjustMorale,
     _getDayPhase, toggleStatsOverlay, showEventBanner, _NON_BURNABLE,
     // Audio globals and API
-    _audioCtx, _masterGain, _musicGain, _sfxGain, _audioMuted, _raidWarningOsc,
-    _volMaster, _volMusic, _volSfx, _applyVolumes, _saveSettings, _loadSettings,
+    _audioCtx, _masterGain, _musicGain, _sfxGain, _raidWarningOsc,
+    _applyVolumes, _saveSettings, _loadSettings, setVolume, getVolume,
     playArrowSFX, playBallistaSFX, playTapSFX, playBuildSFX, playDemolishSFX,
     playTaxSFX, playChopSFX, playRoadSFX, playRaidWarningSFX, playRaidResultSFX,
     playShootSFX, playEnemyDeathSFX, playVictorySFX, playDefeatSFX,
