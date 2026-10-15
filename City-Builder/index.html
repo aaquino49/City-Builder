@@ -8,6 +8,7 @@
     <!-- Fonts are self-hosted (assets/fonts/) so the game looks right offline -->
     <link rel="stylesheet" href="css/fonts.css">
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/market-saves.css">
 </head>
 <body>
 <div id="game-container">
@@ -79,9 +80,8 @@
             <input type="range" id="vol-sfx" class="parch-slider" min="0" max="100" value="100">
         </div>
         <div class="drawer-actions">
-            <button id="btn-save" class="scroll-btn" title="Manual save slot — never overwritten by autosave">✎ SAVE CITY</button>
-            <button id="btn-load" class="scroll-btn" title="Loads your manual save (or the autosave if none exists)">⌂ LOAD CITY</button>
-            <button id="btn-load-autosave" class="scroll-btn" title="Loads the rolling 10-second autosave">↺ LOAD AUTOSAVE</button>
+            <button id="btn-save" class="scroll-btn" title="Save or load one of your reign slots">✎ SAVE / LOAD</button>
+            <button id="btn-load" class="scroll-btn" title="Browse your saved reigns">⌂ LOAD CITY</button>
             <button id="btn-mute" class="scroll-btn">♪ MUTE</button>
             <button id="btn-reset" class="scroll-btn danger">✕ RESET GAME</button>
         </div>
@@ -423,6 +423,7 @@
                 </table>
             </div>
 
+            <button id="btn-start-load" class="scroll-btn start-btn">⌂ LOAD REIGN</button>
             <button id="btn-start" class="scroll-btn wine start-btn">✦ BEGIN REIGN</button>
         </div>
     </div>

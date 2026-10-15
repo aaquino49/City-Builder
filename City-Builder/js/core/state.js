@@ -24,6 +24,7 @@ export const BUILDINGS = {
     monument:       { key: 'monument',       label: 'MONUMENT',      cost: 2000, woodCost: 500, ironCost: 100, stoneCost: 300, housing: 0,  defense: 0,  food: 0,  assetKey: 'building_monument',      color: '#00bcd4', maxWorkers: 0, width: 2, height: 2 },
     granary:        { key: 'granary',        label: 'GRANARY',       cost: 80,  woodCost: 30, ironCost: 0,  stoneCost: 0,  housing: 0,  defense: 0,  food: 0,  assetKey: 'building_granary',       color: '#8B6914', maxWorkers: 0 },
     tavern:         { key: 'tavern',         label: 'TAVERN',        cost: 120, woodCost: 40, ironCost: 0,  stoneCost: 0,  housing: 0,  defense: 0,  food: 0,  assetKey: 'building_tavern',        color: '#b8860b', maxWorkers: 0 },
+    market:         { key: 'market',         label: 'MARKET',        cost: 150, woodCost: 60, ironCost: 0,  stoneCost: 20, housing: 0,  defense: 0,  food: 0,  assetKey: 'building_warehouse',     color: '#a0522d', maxWorkers: 0 },
 };
 
 export const DIFFICULTY_PRESETS = Object.freeze({
@@ -407,7 +408,7 @@ export const projectiles = [];
 export const particles = [];
 export const _activeRaiders = [];
 
-export const _PILLAGEABLE = new Set(['farm','lumberyard','quarry','mine','house','barracks','archery_range','academy','monument']);
+export const _PILLAGEABLE = new Set(['farm','lumberyard','quarry','mine','house','barracks','archery_range','academy','monument','market']);
 export const JOB_SCAN_INTERVAL = 3.0;
 
 export const towerFireTimers = {};
@@ -607,6 +608,7 @@ export function migrateSaveData(data) {
 export function saveGame(slotKey = SAVE_KEY) {
     const data = {
         version: SAVE_VERSION,
+        savedAt: Date.now(),
         endless: gameState.endless || false,
         victoryAchieved: gameState.victoryAchieved || false,
         gold: gameState.gold, housing: gameState.housing, defense: gameState.defense,
@@ -687,6 +689,29 @@ export function flashAutosave() {
     setTimeout(() => b.classList.remove('active'), 1000);
 }
 window.flashAutosave = flashAutosave;
+
+// Lightweight metadata reader for the save-slot browser — never boots the game
+// or migrates the save. Returns null for an empty/corrupt slot (old saves have
+// no savedAt, so it falls back to null and the UI shows a bare summary).
+export function readSaveMeta(slotKey) {
+    try {
+        const raw = localStorage.getItem(slotKey);
+        if (!raw) return null;
+        const d = JSON.parse(raw);
+        return {
+            day: d.day ?? 1,
+            season: d.season ?? 'Spring',
+            wave: (d.raidCount || 0) + 1,
+            population: d.population ?? 0,
+            gold: d.gold ?? 0,
+            difficulty: d.difficulty ?? DEFAULT_DIFFICULTY_KEY,
+            savedAt: d.savedAt ?? null,
+        };
+    } catch (err) {
+        return null;
+    }
+}
+window.readSaveMeta = readSaveMeta;
 
 export function loadGame(slotKey = SAVE_KEY) {
     const raw = localStorage.getItem(slotKey);
@@ -923,8 +948,9 @@ export function loadGame(slotKey = SAVE_KEY) {
 window.loadGame = loadGame;
 
 export function resetGame() {
+    // Only the rolling autosave is cleared — player-named save slots must survive
+    // a reset so a new reign can still return to an old one.
     localStorage.removeItem(SAVE_KEY);
-    localStorage.removeItem(MANUAL_SAVE_KEY);
     location.reload();
 }
 window.resetGame = resetGame;
