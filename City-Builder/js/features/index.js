@@ -10,3 +10,5 @@ import './seed.js';
 import './chronicle.js';
 import './objectives.js';
 import './controls.js';
+import './market.js';
+import './saveslots.js';

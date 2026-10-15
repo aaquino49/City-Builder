@@ -5,7 +5,7 @@ import {
 // Pixel Dominion — Systems Module (Incidents, Diplomacy, Audio, and Time Helpers)
 
 // ===================== INCIDENTS =====================
-const _BUILDING_HP = { house: 80, tower: 200, wall: 100, barracks: 150, farm: 80, lumberyard: 80, quarry: 120, mine: 150, archery_range: 100, ballista_tower: 200, academy: 150, monument: 1000 };
+const _BUILDING_HP = { house: 80, tower: 200, wall: 100, barracks: 150, farm: 80, lumberyard: 80, quarry: 120, mine: 150, archery_range: 100, ballista_tower: 200, academy: 150, monument: 1000, market: 120 };
 
 function getMaxHP(key, tx, ty) {
     // Tier-2 bonus needs the tile: +100 wall (Stone Rampart), +150 gate (Iron-Bound).

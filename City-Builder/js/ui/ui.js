@@ -1225,6 +1225,7 @@ const BUILD_ITEMS = [
     { key: 'farm',           name: 'Farm',           cat: 'civic',    yields: '+10 Food',       assetKey: 'building_farm' },
     { key: 'granary',        name: 'Granary',        cat: 'civic',    yields: '+200 Food Cap',  assetKey: 'building_granary' },
     { key: 'tavern',         name: 'Tavern',         cat: 'civic',    yields: '+Happiness',     assetKey: 'building_tavern' },
+    { key: 'market',         name: 'Market',         cat: 'civic',    yields: 'Trade anytime',  assetKey: 'building_warehouse' },
     { key: 'road',           name: 'Road',           cat: 'civic',    yields: '2× Speed',       assetKey: 'tile_road' },
     { key: 'academy',        name: 'Academy',        cat: 'civic',    yields: 'Research',       assetKey: 'building_academy' },
     { key: 'monument',       name: 'Monument',       cat: 'civic',    yields: 'Win Game',       assetKey: 'building_monument' },

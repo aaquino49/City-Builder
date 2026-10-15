@@ -1,0 +1,255 @@
+/* Pixel Dominion — Market & Save Slots (feature styles) */
+
+/* Both modals can be opened from the start screen (z-index 200), so they must
+   sit above it — the shared .modal-overlay default of 100 would be hidden. */
+#market-modal,
+#saveslots-modal { z-index: 250; }
+
+/* ===== MARKET ===== */
+.market-modal-box { width: 420px; max-width: calc(100vw - 32px); }
+
+.market-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--parchment-edge);
+    position: relative;
+}
+
+.market-seal {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--gold), var(--gold-dark) 70%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #f5e2c0;
+    font-family: 'IM Fell English SC', serif;
+    font-size: 20px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    border: 1px solid var(--gold-dark);
+}
+
+.market-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 16px;
+    letter-spacing: 2.5px;
+    color: var(--wine-dark);
+}
+
+.market-subtitle {
+    font-family: 'EB Garamond', serif;
+    font-style: italic;
+    font-size: 12px;
+    color: var(--ink-faint);
+    margin-top: 1px;
+}
+
+.market-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--parchment-edge);
+    background: rgba(140, 102, 24, 0.06);
+    font-family: 'EB Garamond', serif;
+    font-size: 13px;
+    color: var(--ink-soft);
+}
+
+.market-stat { white-space: nowrap; }
+
+.market-glyph { color: var(--gold-dark); }
+
+.market-stat b {
+    font-family: 'VT323', monospace;
+    font-size: 15px;
+    color: var(--ink);
+}
+
+.market-rows {
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    max-height: 50vh;
+    overflow-y: auto;
+}
+
+.market-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 9px;
+    border: 1px solid var(--parchment-edge);
+    border-radius: 2px;
+    background: rgba(140, 102, 24, 0.04);
+    transition: background 0.1s, border-color 0.1s;
+}
+
+.market-row:hover {
+    background: rgba(140, 102, 24, 0.09);
+    border-color: var(--gold);
+}
+
+.market-row-info { flex: 1; }
+
+.market-row-label {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 13px;
+    color: var(--ink);
+    letter-spacing: 0.5px;
+}
+
+.market-row-cost {
+    font-family: 'EB Garamond', serif;
+    font-style: italic;
+    font-size: 11px;
+    color: var(--ink-faint);
+    margin-top: 1px;
+}
+
+.market-row-btn {
+    border: 1px solid var(--wine-dark);
+    border-radius: 2px;
+    color: #f5e2c0;
+    font-family: 'IM Fell English SC', serif;
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    padding: 5px 12px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.market-row-btn.buy {
+    background: linear-gradient(180deg, var(--leaf), var(--leaf-dark));
+    border-color: var(--leaf-dark);
+}
+
+.market-row-btn.sell {
+    background: linear-gradient(180deg, var(--wine), var(--wine-dark));
+}
+
+.market-row-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.market-footer {
+    padding: 10px 14px;
+    border-top: 1px solid var(--parchment-edge);
+    text-align: center;
+}
+
+/* ===== SAVE SLOTS ===== */
+.saveslots-modal-box { width: 520px; max-width: calc(100vw - 32px); }
+
+.saveslots-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--parchment-edge);
+    position: relative;
+}
+
+.saveslots-seal {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--gold), var(--gold-dark) 70%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #f5e2c0;
+    font-family: 'IM Fell English SC', serif;
+    font-size: 20px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    border: 1px solid var(--gold-dark);
+}
+
+.saveslots-title {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 16px;
+    letter-spacing: 2.5px;
+    color: var(--wine-dark);
+}
+
+.saveslots-subtitle {
+    font-family: 'EB Garamond', serif;
+    font-style: italic;
+    font-size: 12px;
+    color: var(--ink-faint);
+    margin-top: 1px;
+}
+
+.saveslots-rows {
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.saveslots-row {
+    border: 1px solid var(--parchment-edge);
+    border-radius: 2px;
+    background: rgba(140, 102, 24, 0.03);
+    padding: 10px 12px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.saveslots-row.autosave { background: rgba(140, 102, 24, 0.08); }
+
+.saveslots-info { flex: 1; min-width: 200px; }
+
+.saveslots-name {
+    font-family: 'IM Fell English SC', serif;
+    font-size: 13px;
+    letter-spacing: 1px;
+    color: var(--ink);
+}
+
+.saveslots-meta {
+    font-family: 'EB Garamond', serif;
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+}
+
+.saveslots-meta.empty {
+    font-style: italic;
+    color: var(--ink-faint);
+}
+
+.saveslots-time {
+    font-family: 'EB Garamond', serif;
+    font-size: 11px;
+    color: var(--ink-faint);
+    margin-top: 1px;
+}
+
+.saveslots-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.saveslots-actions .scroll-btn {
+    width: auto;
+    padding: 6px 12px;
+}
+
+.saveslots-footer {
+    padding: 10px 14px;
+    border-top: 1px solid var(--parchment-edge);
+    text-align: center;
+}

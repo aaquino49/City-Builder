@@ -235,6 +235,11 @@ function handleGridClick(clientX, clientY) {
             openResearchModal();
             return;
         }
+        if (s && s.def.key === 'market' && (s.progress ?? 1.0) >= 1.0) {
+            closeBuildingPanel();
+            window.openMarketModal();
+            return;
+        }
         if (s && BUILDINGS[s.def.key]) {
             openBuildingPanel(rtx, rty);
         } else {
@@ -1097,9 +1102,6 @@ document.getElementById('btn-help-icon').addEventListener('click', () => {
 });
 
 // --- Settings ---
-// SAVE CITY writes the manual slot, which the 10s autosave never touches — so
-// a deliberate save survives later mistakes.
-document.getElementById('btn-save').addEventListener('click', () => { saveGame(MANUAL_SAVE_KEY); flashAutosave(); });
 
 function loadAndStart(slotKey) {
     if (!loadGame(slotKey)) return;
@@ -1114,15 +1116,13 @@ function loadAndStart(slotKey) {
     if (window.updateTimePauseUI) window.updateTimePauseUI();
     lastTime = 0;
 }
-document.getElementById('btn-load').addEventListener('click', () => {
-    // Prefer the manual slot; fall back to the autosave if none exists yet
-    loadAndStart(localStorage.getItem(MANUAL_SAVE_KEY) ? MANUAL_SAVE_KEY : SAVE_KEY);
-});
-document.getElementById('btn-load-autosave')?.addEventListener('click', () => {
-    loadAndStart(SAVE_KEY);
-});
+window.loadAndStart = loadAndStart;
+// SAVE CITY / LOAD CITY both open the slot browser, which owns the actual
+// save/load/delete actions (see js/features/saveslots.js).
+document.getElementById('btn-save').addEventListener('click', () => { window.openSaveSlots?.(); });
+document.getElementById('btn-load').addEventListener('click', () => { window.openSaveSlots?.(); });
 document.getElementById('btn-reset').addEventListener('click', () => {
-    if (confirm('Reset game? All progress will be lost.')) resetGame();
+    if (confirm('Reset game? Your autosave will be cleared; saved slots are kept.')) resetGame();
 });
 document.getElementById('btn-mute').addEventListener('click', () => {
     const muted = toggleMute();
