@@ -1096,6 +1096,9 @@ function spawnFloat(x, y, text, color, duration) {
 
 // Event banner
 export function showEventBanner(title, desc) {
+    // Chronicle feed: newest-first cap handled by readers; keep the log bounded.
+    sim.eventLog.push({ day: gameState.day, season: gameState.season, title, desc });
+    if (sim.eventLog.length > 80) sim.eventLog.splice(0, sim.eventLog.length - 80);
     const banner = document.getElementById('event-banner');
     const titleEl = document.getElementById('event-banner-title');
     const descEl  = document.getElementById('event-banner-desc');

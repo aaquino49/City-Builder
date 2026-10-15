@@ -1087,6 +1087,8 @@ export function updateRaidHUD() {
 
 // ===================== GENERIC MODAL =====================
 export function showModal(isVictory, lines) {
+    sim.eventLog.push({ day: gameState.day, season: gameState.season, title: isVictory ? 'RAID REPELLED' : 'RAID LOST', desc: lines.slice(0, 4).join(' · ') });
+    if (sim.eventLog.length > 80) sim.eventLog.splice(0, sim.eventLog.length - 80);
     sim.gameIsPaused = true;
     const sealEl     = document.getElementById('raid-seal');
     const titleEl    = document.getElementById('modal-title');
@@ -1284,13 +1286,29 @@ export function updateDaySeason() {
 }
 
 function updateBuildMenu() {
+    // WHY-titles explain disabled buttons; only touch the DOM when changed (runs often).
+    const setDis = (btn, dis, reason) => {
+        btn.disabled = dis;
+        btn.classList.toggle('disabled', dis);
+        const t = dis ? (reason || '') : '';
+        if (btn.title !== t) btn.title = t;
+    };
+    const shorts = (pairs) => {
+        // pairs: [[have, need, label], ...] → "Need 35 more gold, 10 more iron"
+        const missing = [];
+        for (const [have, need, label] of pairs) {
+            if (have < need) missing.push(`${Math.ceil(need - have)} more ${label}`);
+        }
+        return missing.length ? `Need ${missing.join(', ')}` : '';
+    };
+    const NO_IDLE = 'No idle folk — build houses or free up workers';
     document.querySelectorAll('#build-items .build-btn').forEach(btn => {
         const tool = btn.dataset.tool;
         btn.classList.toggle('active', tool === gameState.selectedTool);
-        if (tool === 'demolish') { btn.disabled = false; btn.classList.remove('disabled'); return; }
-        if (tool === 'clear')        { const c = gameState.gold < 10;  btn.disabled = c; btn.classList.toggle('disabled', c); return; }
-        if (tool === 'clear_rubble') { const c = gameState.gold < 15;  btn.disabled = c; btn.classList.toggle('disabled', c); return; }
-        if (tool === 'road')         { const c = gameState.gold < ROAD_COST; btn.disabled = c; btn.classList.toggle('disabled', c); return; }
+        if (tool === 'demolish') { setDis(btn, false, ''); return; }
+        if (tool === 'clear')        { const c = gameState.gold < 10;  setDis(btn, c, shorts([[gameState.gold, 10, 'gold']])); return; }
+        if (tool === 'clear_rubble') { const c = gameState.gold < 15;  setDis(btn, c, shorts([[gameState.gold, 15, 'gold']])); return; }
+        if (tool === 'road')         { const c = gameState.gold < ROAD_COST; setDis(btn, c, shorts([[gameState.gold, ROAD_COST, 'gold']])); return; }
         if (tool === 'train_soldier') {
             // Cost reflects the diplomacy soldier-price penalty (_soldierCostMult);
             // previously the button enabled at 40G while trainSoldier() silently
@@ -1301,26 +1319,38 @@ function updateBuildMenu() {
                 const html = `<span class="build-cost-gold">◈ ${solCost}</span>`;
                 if (costsEl.dataset.cache !== html) { costsEl.dataset.cache = html; costsEl.innerHTML = html; }
             }
-            const c = !(gameState.gold >= solCost && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle'));
-            btn.disabled = c; btn.classList.toggle('disabled', c); return;
+            // Most fundamental reason first: structure → idle folk → resources.
+            if (countBuildings('barracks') <= 0) { setDis(btn, true, 'Build a Barracks first'); return; }
+            if (!citizens.some(ci => ci.job === 'idle')) { setDis(btn, true, NO_IDLE); return; }
+            const c = !(gameState.gold >= solCost);
+            setDis(btn, c, shorts([[gameState.gold, solCost, 'gold']])); return;
         }
         if (tool === 'train_archer') {
             const archCost = window.UNIT_BALANCE?.archer?.goldCost ?? 40;
-            const c = !(gameState.gold >= archCost && countBuildings('archery_range') > 0 && citizens.some(ci => ci.job === 'idle'));
-            btn.disabled = c; btn.classList.toggle('disabled', c); return;
+            if (countBuildings('archery_range') <= 0) { setDis(btn, true, 'Build an Archery Range first'); return; }
+            if (!citizens.some(ci => ci.job === 'idle')) { setDis(btn, true, NO_IDLE); return; }
+            const c = !(gameState.gold >= archCost);
+            setDis(btn, c, shorts([[gameState.gold, archCost, 'gold']])); return;
         }
         if (tool === 'train_knight') {
             const kGold = window.UNIT_BALANCE?.knight?.goldCost ?? 60;
             const kIron = window.UNIT_BALANCE?.knight?.ironCost ?? 20;
-            const c = !(gameState.gold >= kGold && gameState.iron >= kIron && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle'));
-            btn.disabled = c; btn.classList.toggle('disabled', c); return;
+            if (countBuildings('barracks') <= 0) { setDis(btn, true, 'Build a Barracks first'); return; }
+            if (!citizens.some(ci => ci.job === 'idle')) { setDis(btn, true, NO_IDLE); return; }
+            const c = !(gameState.gold >= kGold && gameState.iron >= kIron);
+            setDis(btn, c, shorts([[gameState.gold, kGold, 'gold'], [gameState.iron, kIron, 'iron']])); return;
         }
         if (tool === 'train_captain') {
             const cGold = window.UNIT_BALANCE?.captain?.goldCost ?? 150;
             const cIron = window.UNIT_BALANCE?.captain?.ironCost ?? 30;
             const hasCaptain = soldiers.some(s => s.isCaptain);
-            const c = hasCaptain || !(gameState.gold >= cGold && gameState.iron >= cIron && countBuildings('barracks') > 0 && citizens.some(ci => ci.job === 'idle'));
-            btn.disabled = c; btn.classList.toggle('disabled', c);
+            if (hasCaptain) { setDis(btn, true, 'Only one Captain per city'); }
+            else if (countBuildings('barracks') <= 0) { setDis(btn, true, 'Build a Barracks first'); }
+            else if (!citizens.some(ci => ci.job === 'idle')) { setDis(btn, true, NO_IDLE); }
+            else {
+                const c = !(gameState.gold >= cGold && gameState.iron >= cIron);
+                setDis(btn, c, shorts([[gameState.gold, cGold, 'gold'], [gameState.iron, cIron, 'iron']]));
+            }
             const yieldEl = btn.querySelector('.build-item-yield');
             if (yieldEl) {
                 const label = hasCaptain ? '✓ Commissioned' : 'Aura +25% dmg';
@@ -1350,8 +1380,7 @@ function updateBuildMenu() {
             }
         }
         const canAfford = gameState.gold >= cost && gameState.wood >= woodCost && gameState.iron >= ironCost && gameState.stone >= stoneCost;
-        btn.disabled = !canAfford;
-        btn.classList.toggle('disabled', !canAfford);
+        setDis(btn, !canAfford, shorts([[gameState.gold, cost, 'gold'], [gameState.wood, woodCost, 'wood'], [gameState.stone, stoneCost, 'stone'], [gameState.iron, ironCost, 'iron']]));
     });
 }
 
