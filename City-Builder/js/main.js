@@ -139,6 +139,7 @@ function handleGridClick(clientX, clientY) {
     }
     const { tx, ty } = sim.grid.screenToGrid(clientX, clientY);
     if (!sim.grid.inBounds(tx, ty)) return;
+    if (sim.clickInterceptor && sim.clickInterceptor(tx, ty)) return; // feature-owned click modes (rally placement…)
 
     const R = calcTerritoryRadius();
     const isOutside = Math.hypot(tx - 32, ty - 32) > R;

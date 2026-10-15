@@ -1104,7 +1104,10 @@ export function updateTimePauseUI() {
     const btnDbl = document.getElementById('btn-doubletime');
     if (pauseOverlay) pauseOverlay.classList.toggle('active', sim.userPaused);
     if (btnPause) { btnPause.textContent = sim.userPaused ? '▶' : '⏸'; btnPause.classList.toggle('active', sim.userPaused); }
-    if (btnDbl) btnDbl.classList.toggle('active', sim.timeScale === 2);
+    if (btnDbl) {
+        btnDbl.classList.toggle('active', sim.timeScale > 1);
+        btnDbl.textContent = '×' + (sim.timeScale || 1);
+    }
 }
 document.getElementById('btn-pause').addEventListener('click', () => {
     if (!gameState.started || sim.gameIsPaused) return;
@@ -1112,7 +1115,7 @@ document.getElementById('btn-pause').addEventListener('click', () => {
     updateTimePauseUI();
 });
 document.getElementById('btn-doubletime').addEventListener('click', () => {
-    sim.timeScale = sim.timeScale === 2 ? 1 : 2;
+    sim.timeScale = sim.timeScale >= 3 ? 1 : (sim.timeScale || 1) + 1;
     updateTimePauseUI();
 });
 
@@ -1198,6 +1201,9 @@ function renderBuildMenu(tab) {
     });
     itemsEl.innerHTML = visible.map(item => {
         const def = BUILDINGS[item.key];
+        const hotkeyIdx = window._BUILD_SHORTCUT_TOOLS.indexOf(item.key);
+        const hotkey = item.key === 'demolish' ? '0'
+            : (hotkeyIdx >= 0 ? String(hotkeyIdx + 1) : '');
         const UB = window.UNIT_BALANCE;
         const soldierCost = Math.round((UB?.soldier?.goldCost ?? 40) * (sim.soldierCostMult || 1));
         const specialCosts = {
@@ -1219,6 +1225,7 @@ function renderBuildMenu(tab) {
         if (stoneCost > 0) parts.push(`<span class="build-cost-stone">⬟ ${stoneCost}</span>`);
         if (ironCost > 0)  parts.push(`<span class="build-cost-iron">◇ ${ironCost}</span>`);
         return `<div class="build-btn" data-tool="${item.key}">
+            ${hotkey ? `<span class="build-hotkey">${hotkey}</span>` : ''}
             <div class="build-sprite-frame"><canvas data-asset="${item.assetKey || ''}" width="28" height="28"></canvas></div>
             <div class="build-item-text">
                 <div class="build-item-name">${item.name}</div>

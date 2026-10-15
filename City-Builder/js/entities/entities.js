@@ -40,6 +40,11 @@ function _getNearestOpenNeighbor(tx, ty, walkableFn = isFriendlyWalkable) {
 }
 
 function _getDefendRallyTile() {
+    // Player-placed rally flag wins while it stays valid.
+    if (sim.rallyPoint) {
+        const { tx, ty } = sim.rallyPoint;
+        if (_isInTerritory(tx, ty, 1) && isFriendlyWalkable(tx, ty)) return { tx, ty };
+    }
     const centerTX = 32;
     const centerTY = 32;
     if ((sim.activeWalls.length + sim.activeGates.length) > 0) {

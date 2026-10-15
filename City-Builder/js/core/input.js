@@ -75,7 +75,19 @@ window.addEventListener('blur', () => {
 const _inputCanvas = document.getElementById('game-canvas');
 
 _inputCanvas.addEventListener('mousedown', e => {
+    // Middle mouse always pans the camera; preventDefault stops the browser autoscroll.
+    if (e.button === 1) {
+        e.preventDefault();
+        sim.isDragging = true;
+        sim.dragStartX = e.clientX;
+        sim.dragStartY = e.clientY;
+        sim.lastMouseX = e.clientX;
+        sim.lastMouseY = e.clientY;
+        return;
+    }
     if (e.button !== 0) return;
+    // Feature-owned left-drag modes (drag-to-build lines) get first refusal.
+    if (window.__pdDragBuild && window.__pdDragBuild.onDown(e)) return;
     sim.isDragging = true;
     sim.dragStartX = e.clientX;
     sim.dragStartY = e.clientY;
@@ -84,7 +96,16 @@ _inputCanvas.addEventListener('mousedown', e => {
 });
 
 window.addEventListener('mouseup', e => {
+    if (e.button === 1) {
+        sim.isDragging = false;
+        _inputCanvas.style.cursor = 'default';
+        return;
+    }
     if (e.button !== 0) return;
+    if (window.__pdDragBuild && window.__pdDragBuild.onUp(e)) {
+        sim.isDragging = false;
+        return;
+    }
     if (sim.isDragging) {
         const dx = e.clientX - sim.dragStartX;
         const dy = e.clientY - sim.dragStartY;
@@ -104,6 +125,7 @@ _inputCanvas.addEventListener('mousemove', e => {
 });
 
 window.addEventListener('mousemove', e => {
+    if (window.__pdDragBuild && window.__pdDragBuild.onMove(e)) return;
     if (!sim.isDragging) return;
     sim.camera.x -= (e.clientX - sim.lastMouseX) / sim.camera.zoom;
     sim.camera.y -= (e.clientY - sim.lastMouseY) / sim.camera.zoom;

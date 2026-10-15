@@ -8,6 +8,7 @@
     <!-- Fonts are self-hosted (assets/fonts/) so the game looks right offline -->
     <link rel="stylesheet" href="css/fonts.css">
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/controls.css">
 </head>
 <body>
 <div id="game-container">
@@ -86,8 +87,9 @@
             <button id="btn-reset" class="scroll-btn danger">✕ RESET GAME</button>
         </div>
         <div class="drawer-shortcuts">
-            <div class="shortcut-line">1–9 Build · 0 Demolish · ESC Cancel</div>
-            <div class="shortcut-line">TAB Stats · M Music · N SFX</div>
+            <div class="shortcut-line">1–9 Build · 0 Demolish · ESC Cancel · Drag Walls/Roads</div>
+            <div class="shortcut-line">SPACE Pause · −/+ Speed · F Find Raid · H Home</div>
+            <div class="shortcut-line">TAB Stats · M Music · N SFX · Middle-drag Pan</div>
         </div>
     </div>
 
@@ -205,6 +207,7 @@
             <div id="combat-mode-btns">
                 <button id="btn-defend-mode" class="combat-mode-btn active">🛡 DEFEND</button>
                 <button id="btn-attack-mode" class="combat-mode-btn">⚔ ATTACK</button>
+                <button id="btn-rally" class="combat-mode-btn" title="Place a rally flag for DEFEND mode (click again to clear)">⚑ RALLY</button>
             </div>
         </div>
     </div>
