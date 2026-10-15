@@ -1004,7 +1004,8 @@ export class Citizen {
                 this._setTargetTile(this._workTX, this._workTY, grid);
             }
         } else if (this._phase === 'building') {
-            s.progress = Math.min(1.0, (s.progress ?? 0) + 0.1 * dtSec);
+            const _rate = window.BUILD_RATE_PER_SEC;
+            s.progress = Math.min(1.0, (s.progress ?? 0) + (_rate?.[s.def.key] ?? _rate?.default ?? 0.1) * dtSec);
             this._tickAmbientWalk(dtSec, grid, this._workTX, this._workTY, 1);
             if (Math.random() < dtSec * 3) playTapSFX();
             if (s.progress >= 1.0) {

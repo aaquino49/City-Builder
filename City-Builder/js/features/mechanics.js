@@ -8,7 +8,7 @@ import { sim, gameState, onHook } from '../core/state.js';
 // C5: single shared formula — higher Defense reduces raider structure damage.
 window.getDefenseDamageReduction = function getDefenseDamageReduction() {
     const defense = gameState.defense || 0;
-    return Math.min(0.4, defense / (defense + 250));
+    return Math.min(0.35, defense / (defense + 1000));
 };
 
 // C4: gate SHIFT+click flag read by main.js handleGridClick (which has no event).

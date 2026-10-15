@@ -349,47 +349,113 @@ function trainCaptain() {
 
 function updateSoldiers(dtSec, activeRaiders) {
     for (const sol of soldiers) sol.update(dtSec, sim.grid, activeRaiders);
+}
 
+// Focused one-on-one melee (was: every unit damaged EVERY enemy in range, so
+// equal clusters mutually annihilated within seconds). Each attacker hits its
+// NEAREST enemy in range only; deaths are swept at the end of the pass.
+function resolveMelee(dtSec) {
+    const rangeSq = TILE_SIZE * TILE_SIZE;
+    const CB = COMBAT_BALANCE;
+    const soldierDps = CB?.soldier?.meleeDps ?? 20;
+    const knightDps = CB?.knight?.meleeDps ?? 25;
+    const captainDps = CB?.captain?.meleeDps ?? 30;
+    const raiderDps = CB?.raider?.meleeDps ?? 15;
+    const knightTakenMult = CB?.knight?.damageTakenMult ?? 0.5;
     // Captain aura: soldiers within range deal bonus melee damage
-    const CBcap = COMBAT_BALANCE?.captain;
-    const auraRange = (CBcap?.auraRangeTiles ?? 5) * TILE_SIZE;
+    const auraRange = (CB?.captain?.auraRangeTiles ?? 5) * TILE_SIZE;
     const auraRangeSq = auraRange * auraRange;
-    const auraMult = CBcap?.auraDpsMult ?? 1.25;
+    const auraMult = CB?.captain?.auraDpsMult ?? 1.25;
     const captains = soldiers.filter(s => s.isCaptain);
+    const drilled = !!gameState.upgrades?.militia_drills;
 
-    for (let si = soldiers.length - 1; si >= 0; si--) {
-        const sol = soldiers[si];
-        let dps = sol.isCaptain ? (CBcap?.meleeDps ?? 30) : (COMBAT_BALANCE?.soldier?.meleeDps ?? 15);
+    // a) Defenders strike: each soldier/knight hits its nearest walking raider in range
+    for (const sol of soldiers) {
+        if (sol.hp <= 0) continue;
+        let dps = sol.isCaptain ? captainDps : soldierDps;
         // Militia fight at reduced strength unless trained with militia_drills.
-        if (sol.isMilitia && !sol.isCaptain && !gameState.upgrades?.militia_drills) dps *= 0.6;
+        if (sol.isMilitia && !sol.isCaptain && !drilled) dps *= 0.6;
         if (!sol.isCaptain && captains.length) {
             for (const cap of captains) {
                 const cdx = cap.x - sol.x, cdy = cap.y - sol.y;
                 if (cdx * cdx + cdy * cdy <= auraRangeSq) { dps *= auraMult; break; }
             }
         }
-        for (let ri = raiders.length - 1; ri >= 0; ri--) {
-            const r = raiders[ri];
-            if (r.state !== 'walking') continue;
-            const dist = Math.hypot(r.x - sol.x, r.y - sol.y);
-            if (dist <= TILE_SIZE) {
-                r.hp   -= dps * dtSec;
-                sol.hp -= (COMBAT_BALANCE?.raider?.meleeDps ?? 15) * dtSec;
-                if (Math.random() < dtSec * 8) {
-                    spawnParticle((r.x + sol.x) / 2, (r.y + sol.y) / 2, 'slash', 0.2);
-                }
-                if (r.hp <= 0 && r.state === 'walking') {
-                    killRaider(r);
-                }
-                if (sol.hp <= 0) {
-                    playEnemyDeathSFX();
-                    spawnParticle(sol.x, sol.y, 'puff', 0.4);
-                    soldiers.splice(si, 1);
-                    markUIDirty();
-                    break;
-                }
+        let best = null, bestSq = Infinity;
+        for (const r of raiders) {
+            if (r.state !== 'walking' || r.hp <= 0) continue;
+            const dx = r.x - sol.x, dy = r.y - sol.y;
+            const dSq = dx * dx + dy * dy;
+            if (dSq <= rangeSq && dSq < bestSq) { best = r; bestSq = dSq; }
+        }
+        if (best) {
+            best.hp -= dps * dtSec;
+            if (Math.random() < dtSec * 8) {
+                spawnParticle((best.x + sol.x) / 2, (best.y + sol.y) / 2, 'slash', 0.2);
             }
         }
+    }
+    for (const k of knights) {
+        if (k.hp <= 0) continue;
+        let best = null, bestSq = Infinity;
+        for (const r of raiders) {
+            if (r.state !== 'walking' || r.hp <= 0) continue;
+            const dx = r.x - k.x, dy = r.y - k.y;
+            const dSq = dx * dx + dy * dy;
+            if (dSq <= rangeSq && dSq < bestSq) { best = r; bestSq = dSq; }
+        }
+        if (best) {
+            best.hp -= knightDps * dtSec;
+            if (Math.random() < dtSec * 8) {
+                spawnParticle((best.x + k.x) / 2, (best.y + k.y) / 2, 'slash', 0.2);
+            }
+        }
+    }
+
+    // b) Raiders retaliate: each walking raider hits its nearest defender in range
+    for (const r of raiders) {
+        if (r.state !== 'walking' || r.hp <= 0) continue;
+        let best = null, bestSq = Infinity, bestIsKnight = false;
+        for (const sol of soldiers) {
+            if (sol.hp <= 0) continue;
+            const dx = sol.x - r.x, dy = sol.y - r.y;
+            const dSq = dx * dx + dy * dy;
+            if (dSq <= rangeSq && dSq < bestSq) { best = sol; bestSq = dSq; bestIsKnight = false; }
+        }
+        for (const k of knights) {
+            if (k.hp <= 0) continue;
+            const dx = k.x - r.x, dy = k.y - r.y;
+            const dSq = dx * dx + dy * dy;
+            if (dSq <= rangeSq && dSq < bestSq) { best = k; bestSq = dSq; bestIsKnight = true; }
+        }
+        if (best) {
+            best.hp -= raiderDps * (bestIsKnight ? knightTakenMult : 1) * dtSec;
+            if (Math.random() < dtSec * 8) {
+                spawnParticle((best.x + r.x) / 2, (best.y + r.y) / 2, 'slash', 0.2);
+            }
+        }
+    }
+
+    // Sweep the dead: defenders removed with the same effects as before,
+    // raiders die through killRaider (kill counting, sound, particles).
+    for (let si = soldiers.length - 1; si >= 0; si--) {
+        if (soldiers[si].hp <= 0) {
+            playEnemyDeathSFX();
+            spawnParticle(soldiers[si].x, soldiers[si].y, 'puff', 0.4);
+            soldiers.splice(si, 1);
+            markUIDirty();
+        }
+    }
+    for (let ki = knights.length - 1; ki >= 0; ki--) {
+        if (knights[ki].hp <= 0) {
+            playEnemyDeathSFX();
+            spawnParticle(knights[ki].x, knights[ki].y, 'puff', 0.4);
+            knights.splice(ki, 1);
+            markUIDirty();
+        }
+    }
+    for (const r of raiders) {
+        if (r.hp <= 0 && r.state === 'walking') killRaider(r);
     }
 }
 
@@ -440,32 +506,6 @@ function trainKnight() {
 
 function updateKnights(dtSec, activeRaiders) {
     for (const k of knights) k.update(dtSec, sim.grid, activeRaiders);
-
-    for (let ki = knights.length - 1; ki >= 0; ki--) {
-        const k = knights[ki];
-        for (let ri = raiders.length - 1; ri >= 0; ri--) {
-            const r = raiders[ri];
-            if (r.state !== 'walking') continue;
-            const dist = Math.hypot(r.x - k.x, r.y - k.y);
-            if (dist <= TILE_SIZE) {
-                r.hp -= (COMBAT_BALANCE?.knight?.meleeDps ?? 20) * dtSec;
-                k.hp -= (COMBAT_BALANCE?.raider?.meleeDps ?? 15) * (COMBAT_BALANCE?.knight?.damageTakenMult ?? 0.5) * dtSec;
-                if (Math.random() < dtSec * 8) {
-                    spawnParticle((r.x + k.x) / 2, (r.y + k.y) / 2, 'slash', 0.2);
-                }
-                if (r.hp <= 0 && r.state === 'walking') {
-                    killRaider(r);
-                }
-                if (k.hp <= 0) {
-                    playEnemyDeathSFX();
-                    spawnParticle(k.x, k.y, 'puff', 0.4);
-                    knights.splice(ki, 1);
-                    markUIDirty();
-                    break;
-                }
-            }
-        }
-    }
 }
 
 // --- Gates ---
@@ -696,8 +736,8 @@ function updateCampAssault(dtSec) {
                 const dx = u.x - camp.x, dy = u.y - camp.y;
                 if (dx * dx + dy * dy > rangeSq) continue;
                 const dps = u.isCaptain ? (CB?.captain?.meleeDps ?? 30)
-                          : list === soldiers ? (CB?.soldier?.meleeDps ?? 15)
-                          : (CB?.knight?.meleeDps ?? 20);
+                          : list === soldiers ? (CB?.soldier?.meleeDps ?? 20)
+                          : (CB?.knight?.meleeDps ?? 25);
                 camp.hp -= dps * dtSec;
                 if (Math.random() < dtSec * 3) {
                     spawnParticle((u.x + camp.x) / 2, (u.y + camp.y) / 2, 'slash', 0.2);
@@ -1520,6 +1560,7 @@ function update(dtMs) {
     updateGates(dtSec, _activeRaiders);
     updateArchers(dtSec, _activeRaiders);
     updateKnights(dtSec, _activeRaiders);
+    resolveMelee(dtSec);
     updateCampAssault(dtSec);
 
     const nextJobScanTimer = sim.jobScanTimer + dtSec;
@@ -1565,10 +1606,10 @@ function update(dtMs) {
         }
         const citizenCount = gameState.happiness < 40 ? Math.floor(gameState.population * 0.5) : gameState.population;
         const baseTax = citizenCount * (ECONOMY_BALANCE?.baseGoldPerCitizen ?? 1);
-        const tradeBonus = gameState.upgrades?.trade_guilds ? citizenCount * (ECONOMY_BALANCE?.tradeGuildsGoldPerCitizen ?? 1) : 0;
-        const upkeep = soldiers.filter(s => !s.isMilitia).length * (ECONOMY_BALANCE?.militaryUpkeep?.soldier ?? 1)
-                     + archers.length  * (ECONOMY_BALANCE?.militaryUpkeep?.archer ?? 1)
-                     + knights.length  * (ECONOMY_BALANCE?.militaryUpkeep?.knight ?? 2);
+        const tradeBonus = gameState.upgrades?.trade_guilds ? Math.floor(citizenCount * ECONOMY_BALANCE.tradeGuildsGoldPerCitizen) : 0;
+        const upkeep = soldiers.filter(s => !s.isMilitia).length * (ECONOMY_BALANCE?.militaryUpkeep?.soldier ?? 2)
+                     + archers.length  * (ECONOMY_BALANCE?.militaryUpkeep?.archer ?? 2)
+                     + knights.length  * (ECONOMY_BALANCE?.militaryUpkeep?.knight ?? 3);
         const tax = baseTax + tradeBonus;
         const netGold = tax - upkeep;
         gameState.gold = Math.max(0, gameState.gold + netGold);
@@ -1773,6 +1814,7 @@ renderDifficultyOptions();
 
 document.getElementById('btn-start').addEventListener('click', () => {
     applyDifficultyConfig(selectedDifficultyKey, { syncRaidStrength: true, refresh: false });
+    sim.raidTimer = FIRST_RAID_DELAY;
     initAudio(); // initialize AudioContext from user gesture (browser autoplay policy)
     document.getElementById('start-screen').style.display = 'none';
     gameState.started = true;
@@ -2011,6 +2053,7 @@ Object.assign(window, {
     handleGridClick,
     spawnCitizen, trainSoldier, updateSoldiers, trainArcher, updateArchers,
     trainKnight, trainCaptain, updateKnights, updateGates, killRaider, fireArrow, fireBolt,
+    resolveMelee,
     maybeSpawnRaiderCamp, ensureRaiderCampGarrisons, updateCampAssault,
     updateActiveProjectiles, _startFireAtTile, _getRaiderType, getRaidWaveSize,
     getScaledWaveSize, showTutorial,

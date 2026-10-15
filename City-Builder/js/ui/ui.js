@@ -503,7 +503,7 @@ const RESEARCH_DEFS = [
     { key: 'crop_rotation',         name: 'Crop Rotation',         desc: 'Increases Farm food yield by +2.',               goldCost: 100, stoneCost: 0,  ironCost: 0,  woodCost: 50, requires: 0 },
     { key: 'ballistic_engineering', name: 'Ballistic Engineering', desc: 'Ballista range +3 tiles, bolt damage +15.',      goldCost: 200, stoneCost: 0,  ironCost: 50, woodCost: 0,  requires: 2 },
     { key: 'iron_discipline',       name: 'Iron Discipline',       desc: 'Soldiers spawn with +25 max HP (100→125).',      goldCost: 150, stoneCost: 0,  ironCost: 40, woodCost: 0,  requires: 0 },
-    { key: 'trade_guilds',          name: 'Trade Guilds',          desc: 'Tax income +1 gold per citizen per tick.',       goldCost: 180, stoneCost: 0,  ironCost: 20, woodCost: 0,  requires: 0 },
+    { key: 'trade_guilds',          name: 'Trade Guilds',          desc: 'Tax income +50% (+0.5 gold per citizen per tick).', goldCost: 180, stoneCost: 0,  ironCost: 20, woodCost: 0,  requires: 0 },
     { key: 'field_medicine',        name: 'Field Medicine',        desc: 'Military units regenerate HP 2× faster.',        goldCost: 150, stoneCost: 0,  ironCost: 0,  woodCost: 30, requires: 0 },
     { key: 'masonry_crews',         name: 'Masonry Crews',         desc: 'Repairs twice as fast and cost no wood.',      goldCost: 150, stoneCost: 60, ironCost: 0,  woodCost: 0,  requires: 4 },
     { key: 'watchtowers',           name: 'Watchtowers',           desc: 'Arrow towers gain +2 tiles of range.',         goldCost: 180, stoneCost: 60, ironCost: 0,  woodCost: 0,  requires: 4 },
@@ -2350,8 +2350,9 @@ function calcHappiness() {
 }
 
 function getSpawnInterval() {
-    if (gameState.happiness >= 75) return 3.0;
-    if (gameState.happiness >= 40) return 5.0;
+    const EB = window.ECONOMY_BALANCE;
+    if (gameState.happiness >= 75) return EB?.spawnIntervalHappySec ?? 6;
+    if (gameState.happiness >= 40) return EB?.spawnIntervalContentSec ?? 10;
     return Infinity;
 }
 

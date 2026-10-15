@@ -1115,6 +1115,8 @@ export function queueBanner(item) {
     if (!item) return;
     // Collapse a duplicate title that is still waiting (never the one showing).
     if (item.title && _bannerQueue.some(q => q.title === item.title)) return;
+    // Expansion banners carry no title — collapse on kind instead.
+    if (item.kind === 'expansion' && _bannerQueue.some(q => q.kind === 'expansion')) return;
     item._seq = ++_bannerSeq;
     const priority = item.title && _BANNER_PRIORITY.some(p => item.title.startsWith(p));
     if (priority) _bannerQueue.unshift(item);
@@ -1190,10 +1192,10 @@ function updateStatsOverlay() {
     const builders  = citizens.filter(c => c.job === 'builder').length;
     const citizenCount = gameState.happiness < 40 ? Math.floor(gameState.population * 0.5) : gameState.population;
     const baseTax = citizenCount * (ECONOMY_BALANCE?.baseGoldPerCitizen ?? 1);
-    const tradeBonus = gameState.upgrades?.trade_guilds ? citizenCount * (ECONOMY_BALANCE?.tradeGuildsGoldPerCitizen ?? 1) : 0;
-    const upkeep = soldiers.filter(s => !s.isMilitia).length * (ECONOMY_BALANCE?.militaryUpkeep?.soldier ?? 1)
-                 + archers.length  * (ECONOMY_BALANCE?.militaryUpkeep?.archer ?? 1)
-                 + knights.length  * (ECONOMY_BALANCE?.militaryUpkeep?.knight ?? 2);
+    const tradeBonus = gameState.upgrades?.trade_guilds ? Math.floor(citizenCount * ECONOMY_BALANCE.tradeGuildsGoldPerCitizen) : 0;
+    const upkeep = soldiers.filter(s => !s.isMilitia).length * (ECONOMY_BALANCE?.militaryUpkeep?.soldier ?? 2)
+                 + archers.length  * (ECONOMY_BALANCE?.militaryUpkeep?.archer ?? 2)
+                 + knights.length  * (ECONOMY_BALANCE?.militaryUpkeep?.knight ?? 3);
     const taxPerMin = Math.round((baseTax + tradeBonus - upkeep) / TAX_INTERVAL * 60);
     // Real production math (was hardcoded estimates that misinformed the player)
     const seasonMod = SEASON_MODIFIERS[SEASONS.indexOf(gameState.season)];

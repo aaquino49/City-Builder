@@ -436,7 +436,7 @@ function testRegressionBugs() {
     sim.scoutTimer = 0.01;
     window.update(32);
     results.scoutExpiryStartsRaid = sim.raidActive === true && window.raiders.length > 0 && sim.scoutPhase === false;
-    results.waveBannerShown = document.getElementById('event-banner-title')?.textContent?.includes('RAID WAVE') || false;
+    results.waveBannerShown = sim.eventLog.some(e => (e.title || '').includes('RAID WAVE'));
 
     // Expiring the timer during the day queues the raid for nightfall
     window.raiders.length = 0;

@@ -21,7 +21,7 @@ export const BUILDINGS = {
     archery_range:  { key: 'archery_range',  label: 'ARCHERY RANGE', cost: 80,  woodCost: 30, ironCost: 10, stoneCost: 0,  housing: 0,  defense: 0,  food: 0,  assetKey: 'building_archery_range', color: '#4a6a3a', maxWorkers: 0 },
     ballista_tower: { key: 'ballista_tower', label: 'BALLISTA TWR',  cost: 150, woodCost: 40, ironCost: 20, stoneCost: 0,  housing: 0,  defense: 15, food: 0,  assetKey: 'building_ballistatower', color: '#4a3a2a', maxWorkers: 0 },
     academy:        { key: 'academy',        label: 'ACADEMY',       cost: 200, woodCost: 50,  ironCost: 0,  stoneCost: 50,  housing: 0,  defense: 0,  food: 0,  assetKey: 'building_academy',       color: '#9c27b0', maxWorkers: 0 },
-    monument:       { key: 'monument',       label: 'MONUMENT',      cost: 2000, woodCost: 500, ironCost: 100, stoneCost: 300, housing: 0,  defense: 0,  food: 0,  assetKey: 'building_monument',      color: '#00bcd4', maxWorkers: 0, width: 2, height: 2 },
+    monument:       { key: 'monument',       label: 'MONUMENT',      cost: 5000, woodCost: 1250, ironCost: 300, stoneCost: 800, housing: 0,  defense: 0,  food: 0,  assetKey: 'building_monument',      color: '#00bcd4', maxWorkers: 0, width: 2, height: 2 },
     granary:        { key: 'granary',        label: 'GRANARY',       cost: 80,  woodCost: 30, ironCost: 0,  stoneCost: 0,  housing: 0,  defense: 0,  food: 0,  assetKey: 'building_granary',       color: '#8B6914', maxWorkers: 0 },
     tavern:         { key: 'tavern',         label: 'TAVERN',        cost: 120, woodCost: 40, ironCost: 0,  stoneCost: 0,  housing: 0,  defense: 0,  food: 0,  assetKey: 'building_tavern',        color: '#b8860b', maxWorkers: 0 },
     market:         { key: 'market',         label: 'MARKET',        cost: 150, woodCost: 60, ironCost: 0,  stoneCost: 20, housing: 0,  defense: 0,  food: 0,  assetKey: 'building_warehouse',     color: '#a0522d', maxWorkers: 0 },
@@ -31,19 +31,19 @@ export const DIFFICULTY_PRESETS = Object.freeze({
     settler: Object.freeze({
         key: 'settler',
         label: 'Settler',
-        monumentCost: Object.freeze({ gold: 1800, wood: 450, stone: 250, iron: 80 }),
+        monumentCost: Object.freeze({ gold: 4000, wood: 1000, stone: 600, iron: 200 }),
         raidStrengths: Object.freeze([10, 15, 22, 30, 40, 52, 66, 82, 100, 122]),
     }),
     lord: Object.freeze({
         key: 'lord',
         label: 'Lord',
-        monumentCost: Object.freeze({ gold: 2000, wood: 500, stone: 300, iron: 100 }),
+        monumentCost: Object.freeze({ gold: 5000, wood: 1250, stone: 800, iron: 300 }),
         raidStrengths: Object.freeze([12, 18, 26, 36, 48, 62, 78, 96, 118, 145]),
     }),
     iron_crown: Object.freeze({
         key: 'iron_crown',
         label: 'Iron Crown',
-        monumentCost: Object.freeze({ gold: 2400, wood: 650, stone: 400, iron: 140 }),
+        monumentCost: Object.freeze({ gold: 6500, wood: 1600, stone: 1100, iron: 450 }),
         raidStrengths: Object.freeze([14, 22, 32, 45, 60, 78, 98, 122, 150, 185]),
     }),
 });
@@ -78,6 +78,7 @@ export const AUTOSAVE_INTERVAL = 10.0;
 export const SAVE_KEY = 'pixel_dominion_save';               // rolling autosave slot
 export const MANUAL_SAVE_KEY = 'pixel_dominion_save_manual'; // player-initiated slot (survives autosaves)
 export const RAID_DURATION = 180;
+export const FIRST_RAID_DELAY = 240;
 // Failsafe: if a raid is still unresolved after this long, all remaining
 // walkers are force-retreated so a stuck raider can never stall the game.
 export const RAID_ACTIVE_TIMEOUT = 240;
@@ -121,11 +122,13 @@ export const UNIT_BALANCE = Object.freeze({
 
 export const ECONOMY_BALANCE = Object.freeze({
     baseGoldPerCitizen: 1,
-    tradeGuildsGoldPerCitizen: 1,
+    tradeGuildsGoldPerCitizen: 0.5,
+    spawnIntervalHappySec: 6,
+    spawnIntervalContentSec: 10,
     militaryUpkeep: Object.freeze({
         soldier: 1,
-        archer: 1,
-        knight: 2,
+        archer: 2,
+        knight: 3,
     }),
 });
 
@@ -144,8 +147,8 @@ export const PRODUCTION_BALANCE = Object.freeze({
 // Combat tuning — single source of truth for damage/range numbers that were
 // previously inline literals scattered across entities.js and main.js.
 export const COMBAT_BALANCE = Object.freeze({
-    soldier:  Object.freeze({ meleeDps: 15 }),
-    knight:   Object.freeze({ meleeDps: 20, damageTakenMult: 0.5 }),
+    soldier:  Object.freeze({ meleeDps: 20 }),
+    knight:   Object.freeze({ meleeDps: 25, damageTakenMult: 0.5 }),
     // One per city; nearby soldiers fight harder while he stands
     captain:  Object.freeze({ meleeDps: 30, auraRangeTiles: 5, auraDpsMult: 1.25 }),
     // Camps: each standing camp strengthens raids; assaulting them is what
@@ -162,6 +165,16 @@ export const COMBAT_BALANCE = Object.freeze({
     // Melee target distribution: prefer the nearest raider with fewer than this
     // many attackers already on it (prevents 30 soldiers piling on one target).
     maxMeleeAttackersPerTarget: 3,
+});
+
+// Construction speed per building (progress per second while the builder works).
+// Builders spend roughly half their time shuffling around the site, so real
+// times are ~2.2× these: Monument ≈ 2.5 minutes — a tense "defend the wonder"
+// window — and the Academy ≈ 45 s.
+export const BUILD_RATE_PER_SEC = Object.freeze({
+    monument: 0.015,
+    academy: 0.05,
+    default: 0.1,
 });
 
 // Object Pools to mitigate Garbage Collection sweeps
@@ -263,6 +276,7 @@ Object.assign(window, {
     STONE_SPAWN_CHANCE, IRON_SPAWN_CHANCE, ROAD_COST, ALL_DEFS, SEASON_MODIFIERS, SEASONS,
     DAY_PHASES, DAY_DURATION, SEASON_DURATION, TAX_INTERVAL, FOOD_CAP_BASE,
     FOOD_CAP_PER_GRANARY, EMIGRATION_INTERVAL, AUTOSAVE_INTERVAL, SAVE_KEY, MANUAL_SAVE_KEY, RAID_DURATION,
+    FIRST_RAID_DELAY, BUILD_RATE_PER_SEC,
     RAID_ACTIVE_TIMEOUT, RAID_WAVE_SIZES, FINAL_RAID_WAVE,
     TIER2_UPGRADES, UNIT_BALANCE, ECONOMY_BALANCE, PRODUCTION_BALANCE, COMBAT_BALANCE,
     DIFFICULTY_PRESETS, DEFAULT_DIFFICULTY_KEY,
@@ -279,7 +293,7 @@ export const statsEl = document.getElementById('stats-counter');
 // Internal raw state object (Proxy wraps this)
 const _rawGameState = {
     gold: 300, housing: 0, defense: 0,
-    population: 0, food: 0, happiness: 100,
+    population: 0, food: 50, happiness: 100, // 50 food keeps starters content ~2 min so they don't emigrate before the first objective is read
     wood: 100, stone: 50, iron: 0,
     selectedTool: null,
     difficulty: DEFAULT_DIFFICULTY_KEY,
@@ -481,7 +495,7 @@ export const sim = {
     timeScale: 1,
     currentTerritoryRadius: 3,
     expansionBannerTimer: null,
-    raidTimer: RAID_DURATION,
+    raidTimer: FIRST_RAID_DELAY,
     raidStrength: 10,
     raidCount: 0,
     raidActive: false,
