@@ -2172,14 +2172,20 @@ export function rebuildStructureLists() {
     // patchStaticCache(tx, ty, w, h); init/load call _buildStaticCache() once.
 }
 export function showExpansionBanner() {
+    // Route through the shared banner queue so it never overlaps another banner.
+    if (typeof window.queueBanner === 'function') window.queueBanner({ kind: 'expansion' });
+}
+
+// Show/hide the expansion banner DOM for the given duration; called by the queue.
+export function _showExpansionBannerDOM(durationMs) {
     const banner = document.getElementById('expansion-banner');
     if (!banner) return;
     if (sim.expansionBannerTimer) clearTimeout(sim.expansionBannerTimer);
-    
+
     banner.style.display = 'block';
     banner.offsetHeight; // force reflow
     banner.classList.add('active');
-    
+
     sim.expansionBannerTimer = setTimeout(() => {
         banner.classList.remove('active');
         setTimeout(() => {
@@ -2187,7 +2193,7 @@ export function showExpansionBanner() {
                 banner.style.display = 'none';
             }
         }, 500);
-    }, 1500);
+    }, durationMs ?? 1500);
 }
 
 export function getAdjacencyBonus(tx, ty, buildingType) {
@@ -2356,7 +2362,7 @@ function formatTime(s) {
 
 Object.assign(window, {
 
-    rebuildStructureLists, showExpansionBanner, getAdjacencyBonus, getFoodCap,
+    rebuildStructureLists, showExpansionBanner, _showExpansionBannerDOM, getAdjacencyBonus, getFoodCap,
     countBuildings, getScaledCost, calcDefense, calcHappiness, getSpawnInterval, formatTime,
     _buildStaticCache, _staticCanvas, patchStaticCache,
 

@@ -1099,11 +1099,65 @@ export function showEventBanner(title, desc) {
     // Chronicle feed: newest-first cap handled by readers; keep the log bounded.
     sim.eventLog.push({ day: gameState.day, season: gameState.season, title, desc });
     if (sim.eventLog.length > 80) sim.eventLog.splice(0, sim.eventLog.length - 80);
+    // Queue instead of showing immediately, so back-to-back events are all readable.
+    queueBanner({ kind: 'event', title, desc });
+}
+
+// ---- Shared banner queue (events + expansion) ----
+// One banner at a time; uses setTimeout so it keeps running while the game is paused.
+let _bannerQueue = [];
+let _bannerShowing = false;
+let _bannerSeq = 0;
+// These urgent titles cut the line (front of the waiting queue).
+const _BANNER_PRIORITY = ['RAID WAVE', 'SCOUTS SPOTTED', 'FIRE!', 'CAMP DESTROYED'];
+
+export function queueBanner(item) {
+    if (!item) return;
+    // Collapse a duplicate title that is still waiting (never the one showing).
+    if (item.title && _bannerQueue.some(q => q.title === item.title)) return;
+    item._seq = ++_bannerSeq;
+    const priority = item.title && _BANNER_PRIORITY.some(p => item.title.startsWith(p));
+    if (priority) _bannerQueue.unshift(item);
+    else _bannerQueue.push(item);
+    // Cap the waiting queue at 4, dropping the oldest waiting item (smallest seq).
+    while (_bannerQueue.length > 4) {
+        let oldest = 0;
+        for (let i = 1; i < _bannerQueue.length; i++) {
+            if (_bannerQueue[i]._seq < _bannerQueue[oldest]._seq) oldest = i;
+        }
+        _bannerQueue.splice(oldest, 1);
+    }
+    _pumpBannerQueue();
+}
+
+function _pumpBannerQueue() {
+    if (_bannerShowing) return;
+    const item = _bannerQueue.shift();
+    if (!item) return;
+    _bannerShowing = true;
+    const hasMore = _bannerQueue.length > 0;
+    // Longer display when nothing else waits, shorter when sharing time.
+    const dur = item.kind === 'expansion' ? 1500 : (hasMore ? 2200 : 4000);
+    if (item.kind === 'expansion') {
+        if (typeof window._showExpansionBannerDOM === 'function') window._showExpansionBannerDOM(dur);
+    } else {
+        _showEventBannerDOM(item.title, item.desc, dur);
+    }
+    if (sim.bannerTimeout) clearTimeout(sim.bannerTimeout);
+    // Advance after the display time plus the 0.5s fade-out transition.
+    sim.bannerTimeout = setTimeout(() => {
+        sim.bannerTimeout = null;
+        _bannerShowing = false;
+        _pumpBannerQueue();
+    }, dur + 500);
+}
+
+// Show/hide the event banner DOM for the given duration (fade matches old behaviour).
+function _showEventBannerDOM(title, desc, durationMs) {
     const banner = document.getElementById('event-banner');
     const titleEl = document.getElementById('event-banner-title');
     const descEl  = document.getElementById('event-banner-desc');
     if (!banner) return;
-    if (sim.bannerTimeout) { clearTimeout(sim.bannerTimeout); sim.bannerTimeout = null; }
     if (titleEl) titleEl.textContent = title;
     if (descEl)  descEl.textContent  = desc;
     banner.style.transition = 'none';
@@ -1112,11 +1166,10 @@ export function showEventBanner(title, desc) {
     banner.offsetHeight;
     banner.style.transition = 'opacity 0.5s ease';
     banner.style.opacity = '1';
-    sim.bannerTimeout = setTimeout(() => {
+    setTimeout(() => {
         banner.style.opacity = '0';
         setTimeout(() => { if (banner.style.opacity === '0') banner.style.display = 'none'; }, 500);
-        sim.bannerTimeout = null;
-    }, 4000);
+    }, durationMs);
 }
 
 // Stats overlay
@@ -1299,7 +1352,7 @@ export function _getDayPhase(t) {
 Object.assign(window, {
     getMaxHP, IncidentManager, _DIPLOMACY_ACTION_MAP, _DIPLOMACY_POOL,
     adjustMorale,
-    _getDayPhase, toggleStatsOverlay, showEventBanner, _NON_BURNABLE,
+    _getDayPhase, toggleStatsOverlay, showEventBanner, queueBanner, _NON_BURNABLE,
     // Audio globals and API
     _audioCtx, _masterGain, _musicGain, _sfxGain, _raidWarningOsc,
     _applyVolumes, _saveSettings, _loadSettings, setVolume, getVolume,
