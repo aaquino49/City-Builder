@@ -156,7 +156,7 @@ document.addEventListener('wheel', e => {
     const rect = _inputCanvas.getBoundingClientRect();
     const mwx = (e.clientX - rect.left) / sim.camera.zoom + sim.camera.x;
     const mwy = (e.clientY - rect.top)  / sim.camera.zoom + sim.camera.y;
-    sim.camera.zoom = Math.min(3.0, Math.max(0.5, sim.camera.zoom * factor));
+    sim.camera.zoom = Math.min(4.0, Math.max(0.5, sim.camera.zoom * factor));
     sim.camera.x = mwx - (e.clientX - rect.left) / sim.camera.zoom;
     sim.camera.y = mwy - (e.clientY - rect.top)  / sim.camera.zoom;
     // Clamp immediately so update() never has to fight the pivot position.

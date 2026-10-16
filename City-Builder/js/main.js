@@ -20,6 +20,7 @@ import './core/utils.js';
 import './core/pathfinding.js';
 import './entities/entities.js';
 import { _NON_BURNABLE } from './systems/systems.js';
+import { loadSprites } from './render/sprites.js';
 import { patchStaticCache, showModal, triggerVictory, updateCombatModeUI, updateRaidHUD, _buildStaticCache } from './ui/ui.js';
 import './core/input.js';
 import { runSmokeTests } from './smoke_tests.js';
@@ -390,6 +391,7 @@ function resolveMelee(dtSec) {
         }
         if (best) {
             best.hp -= dps * dtSec;
+            sol._meleeT = performance.now() / 1000; // Tiny Swords 'attack' anim window
             if (Math.random() < dtSec * 8) {
                 spawnParticle((best.x + sol.x) / 2, (best.y + sol.y) / 2, 'slash', 0.2);
             }
@@ -406,6 +408,7 @@ function resolveMelee(dtSec) {
         }
         if (best) {
             best.hp -= knightDps * dtSec;
+            k._meleeT = performance.now() / 1000; // Tiny Swords 'attack' anim window
             if (Math.random() < dtSec * 8) {
                 spawnParticle((best.x + k.x) / 2, (best.y + k.y) / 2, 'slash', 0.2);
             }
@@ -441,6 +444,7 @@ function resolveMelee(dtSec) {
     for (let si = soldiers.length - 1; si >= 0; si--) {
         if (soldiers[si].hp <= 0) {
             playEnemyDeathSFX();
+            window.spawnFx?.('dead', soldiers[si].x, soldiers[si].y);
             spawnParticle(soldiers[si].x, soldiers[si].y, 'puff', 0.4);
             soldiers.splice(si, 1);
             markUIDirty();
@@ -449,6 +453,7 @@ function resolveMelee(dtSec) {
     for (let ki = knights.length - 1; ki >= 0; ki--) {
         if (knights[ki].hp <= 0) {
             playEnemyDeathSFX();
+            window.spawnFx?.('dead', knights[ki].x, knights[ki].y);
             spawnParticle(knights[ki].x, knights[ki].y, 'puff', 0.4);
             knights.splice(ki, 1);
             markUIDirty();
@@ -534,6 +539,7 @@ function updateGates(dtSec, activeRaiders) {
                     if (s.hp <= 0) {
                         delete sim.tier2Upgrades[`${tx},${ty}`];
                         sim.grid.structures[ty][tx] = createRubble();
+                        window.spawnFx?.('explosion', gx, gy);
                         spawnParticle(gx, gy, 'puff', 0.4);
                         triggerShake(8);
                         patchStaticCache(tx, ty);
@@ -552,6 +558,7 @@ function killRaider(r) {
     r.state = 'dead';
     gameState.raidersDefeated = (gameState.raidersDefeated || 0) + 1;
     playEnemyDeathSFX();
+    window.spawnFx?.('dead', r.x, r.y);
     spawnParticle(r.x, r.y, 'puff', 0.4);
 }
 
@@ -1996,6 +2003,7 @@ async function init() {
 
     const loader = new AssetLoader();
     sim.assets = await loader.loadAll();
+    await loadSprites(); // Tiny Swords sheets (+MIPs); missing files fall back to old art
     _buildGrassCache();
 
     sim.incidentManager = new IncidentManager();

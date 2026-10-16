@@ -957,6 +957,7 @@ export function loadGame(slotKey = SAVE_KEY) {
     sim.timeScale = 1;
     sim.currentTerritoryRadius = calcTerritoryRadius();
     rebuildStructureLists();
+    if (sim.grid && typeof sim.grid.generateDeco === 'function') sim.grid.generateDeco();
     _buildGrassCache();
     _buildStaticCache();
     // Restore active-raid state AFTER raiders/citizens/structure lists exist, so

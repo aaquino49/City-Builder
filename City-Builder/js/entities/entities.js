@@ -975,6 +975,7 @@ export class Citizen {
                     const idx = soldiers.indexOf(sol);
                     if (idx !== -1) {
                         soldiers.splice(idx, 1);
+                        window.spawnFx?.('dead', sol.x, sol.y);
                         const p = getPooledParticle();
                         p.x = sol.x; p.y = sol.y; p.type = 'puff'; p.timer = 0; p.duration = 0.4; p.alpha = 1.0;
                         particles.push(p);
@@ -1296,6 +1297,7 @@ export class Archer {
                 if (closest) {
                     this._fireTimer = CB?.fireIntervalSec ?? 1.5;
                     const dmg = gameState.upgrades?.steel_bows ? (CB?.steelBowsDamage ?? 25) : (CB?.damage ?? 20);
+                    this._shootT = performance.now() / 1000; // Tiny Swords 'shoot' anim window
                     fireArrow(this.x, this.y, closest, dmg);
                 }
             }
@@ -1415,6 +1417,7 @@ export class Archer {
                 if (closest) {
                     this._fireTimer = CB?.fireIntervalSec ?? 1.5;
                     const dmg = gameState.upgrades?.steel_bows ? (CB?.steelBowsDamage ?? 25) : (CB?.damage ?? 20);
+                    this._shootT = performance.now() / 1000; // Tiny Swords 'shoot' anim window
                     fireArrow(px, py, closest, dmg);
                 }
             }
@@ -1806,6 +1809,7 @@ export class Raider {
                 // Record the raid and grief tallies in shared simulation state.
                 sim.raidCitizensKilled = sim.raidCitizensKilled + 1;
                 sim.griefPenalty = Math.min(15, sim.griefPenalty + 5);
+                window.spawnFx?.('dead', c.x, c.y);
                 const p = getPooledParticle();
                 p.x = c.x; p.y = c.y; p.type = 'puff'; p.timer = 0; p.duration = 0.4; p.alpha = 1.0;
                 particles.push(p);
@@ -1859,6 +1863,7 @@ export class Raider {
                             }
                         }
                         sim.raidBuildingsDestroyed = sim.raidBuildingsDestroyed + 1;
+                        window.spawnFx?.('explosion', parentTX * TILE_SIZE + TILE_SIZE / 2, parentTY * TILE_SIZE + TILE_SIZE / 2);
                         window.patchStaticCache?.(parentTX, parentTY, w, h);
                         rebuildStructureLists();
                         if (window.markUIDirty) window.markUIDirty();

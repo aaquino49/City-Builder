@@ -1,5 +1,6 @@
 // Feature modules register themselves via onHook(). Import each feature file here.
 import './mechanics.js';
+import './fx.js';
 // Order matters: scoutmarkers draws on top of the minimap canvas each frame,
 // so minimap must register its frame hook first.
 import './minimap.js';

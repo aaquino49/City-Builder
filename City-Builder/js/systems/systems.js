@@ -198,6 +198,7 @@ class IncidentManager {
                 const p = getPooledParticle();
                 p.x = fx; p.y = fy; p.type = 'puff'; p.timer = 0; p.duration = 0.5; p.alpha = 1.0;
                 particles.push(p);
+                window.spawnFx?.('explosion', fx, fy);
                 triggerShake(5);
                 window.patchStaticCache?.(parentTX, parentTY, w, h);
                 rebuildStructureLists();

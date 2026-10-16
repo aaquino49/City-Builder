@@ -2,6 +2,11 @@ import {
     sim,
     runHook,
 } from '../core/state.js';
+import {
+    SPRITE_FOR, ICON_FOR,
+    drawSprite, hasSprite, drawSpriteIcon,
+    hasTerrain, paintGrass, paintRoad, paintDeco,
+} from '../render/sprites.js';
 
 // Pixel Dominion — UI & Renderer Module
 
@@ -55,6 +60,366 @@ export function randomSeedString() {
     return out;
 }
 
+// ===================== TINY SWORDS DEPTH-SORTED WORLD PASS =====================
+// Every visible drawable goes into one reused array, sorted by ground-y so that
+// things lower on screen overlap things behind them (units walk behind towers).
+// Entries are recycled via _drawFree — no per-frame allocation of arrays or
+// entry objects after warmup. Kind codes (not strings) keep the hot loop lean.
+const DK_STRUCT = 0, DK_NATURE = 1, DK_CIT = 2, DK_SOL = 3, DK_ARC = 4,
+      DK_KNI = 5, DK_RAID = 6, DK_CAMP = 7, DK_MERCH = 8, DK_SHEEP = 9;
+const _drawList = [];
+const _drawFree = [];
+function _emitDraw(k, y, o, tx, ty) {
+    const e = _drawFree.pop() || {};
+    e.k = k; e.y = y; e.o = o; e.tx = tx; e.ty = ty;
+    _drawList.push(e);
+}
+function _drawCmp(a, b) { return a.y - b.y; }
+
+function _facingLeft(u) {
+    if (u.targetX < u.x - 0.5) u._facingLeft = true;
+    else if (u.targetX > u.x + 0.5) u._facingLeft = false;
+    return !!u._facingLeft;
+}
+
+// True when the unit's base position moved since the last drawn frame (0.05px
+// threshold). Citizen idle-sway render offsets are ignored on purpose so that
+// fidgeting in place reads as idle rather than running.
+function _movedSinceDraw(u, x, y) {
+    const lx = u._sprLX, ly = u._sprLY;
+    let moved = false;
+    if (lx !== undefined && ly !== undefined) {
+        const dx = x - lx, dy = y - ly;
+        moved = dx * dx + dy * dy > 0.0025;
+    }
+    u._sprLX = x; u._sprLY = y;
+    return moved;
+}
+
+function _structSpriteKey(s, tx, ty) {
+    const key = s.def.key;
+    // Tier-2 re-skins only exist for houses and towers; look the upgrade map up
+    // solely for those (avoids per-frame string keys for every structure).
+    if (key === 'house') return sim.tier2Upgrades[tx + ',' + ty] ? SPRITE_FOR.house_t2 : SPRITE_FOR.house;
+    if (key === 'tower') return sim.tier2Upgrades[tx + ',' + ty] ? SPRITE_FOR.tower_t2 : SPRITE_FOR.tower;
+    if (key === 'monument') return (s.progress ?? 1.0) < 1.0 ? SPRITE_FOR.monument_construction : SPRITE_FOR.monument;
+    if (key === 'academy' && (s.progress ?? 1.0) < 1.0) return SPRITE_FOR.academy_construction;
+    if (key === 'rubble') return SPRITE_FOR.rubble;
+    if (key === 'mine') return SPRITE_FOR.mine;
+    if (key === 'quarry') return SPRITE_FOR.quarry;
+    return null; // no Tiny Swords sprite yet — old sprite at today's size/position
+}
+
+function _drawStructTiny(ctx, assets, s, tx, ty) {
+    const w = s.def.width || 1;
+    const h = s.def.height || 1;
+    const spr = _structSpriteKey(s, tx, ty);
+    const prog = s.progress ?? 1.0;
+    if (spr && hasSprite(spr)) {
+        if (prog < 1.0) ctx.globalAlpha = 0.4 + prog * 0.6;
+        drawSprite(ctx, spr, 'idle', 0, (tx + w / 2) * TILE_SIZE, (ty + h) * TILE_SIZE);
+        if (prog < 1.0) ctx.globalAlpha = 1.0;
+        return;
+    }
+    const assetKey = s.def.key === 'gate'
+        ? (s.gateOpen !== false ? 'building_gate_open' : 'building_gate_closed')
+        : s.def.assetKey;
+    const asset = assets[assetKey];
+    if (prog < 1.0) ctx.globalAlpha = 0.4 + prog * 0.6;
+    if (asset) {
+        ctx.drawImage(asset, tx * TILE_SIZE, ty * TILE_SIZE, w * TILE_SIZE, h * TILE_SIZE);
+    } else {
+        ctx.fillStyle = s.def.color;
+        ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, w * TILE_SIZE, h * TILE_SIZE);
+    }
+    if (prog < 1.0) ctx.globalAlpha = 1.0;
+}
+
+function _drawNatureTiny(ctx, assets, s, tx, ty, now) {
+    const key = s.def.key;
+    const cx = tx * TILE_SIZE + TILE_SIZE / 2;
+    const by = (ty + 1) * TILE_SIZE;
+    if (key === 'obstacle_tree') {
+        // Per-tile phase offset so a forest doesn't sway in lockstep.
+        if (drawSprite(ctx, SPRITE_FOR.tree, 'sway', now + ((tx * 13 + ty * 7) & 3) * 0.25, cx, by)) return;
+        const asset = assets['obstacle_tree'];
+        if (asset) ctx.drawImage(asset, tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        return;
+    }
+    if (key === 'stone_deposit') {
+        if (drawSprite(ctx, SPRITE_FOR.stone_deposit, 'idle', 0, cx, by)) return;
+        const asset = assets['obstacle_stone'];
+        if (asset) ctx.drawImage(asset, tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        else { ctx.fillStyle = '#6e7275'; ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE); }
+        return;
+    }
+    // iron_vein keeps its old sprite for now.
+    const asset = assets['obstacle_iron'];
+    if (asset) ctx.drawImage(asset, tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    else { ctx.fillStyle = '#b2b9c0'; ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE); }
+}
+
+function _drawCitizenTiny(ctx, assets, c, now) {
+    if (c.job === 'hiding' && c._phase === 'hidden') return; // inside a house
+    const moved = _movedSinceDraw(c, c.x, c.y);
+    const rebel = c.job === 'rebel';
+    let anim = moved ? 'run' : 'idle';
+    if (!rebel) {
+        if (c.job === 'builder' && c._phase === 'building') anim = 'build';
+        else if ((c.job === 'woodcutter' || c.job === 'stone_miner' || c.job === 'iron_miner') && c._phase === 'work') anim = 'chop';
+        else if (c._phase === 'returning') anim = moved ? 'carry_run' : 'carry_idle';
+    }
+    const dx = (typeof c.renderX === 'function') ? c.renderX() : c.x;
+    const dy = (typeof c.renderY === 'function') ? c.renderY() : c.y;
+    if (drawSprite(ctx, rebel ? SPRITE_FOR.rebel : SPRITE_FOR.citizen, anim, now, dx, dy, { flipX: _facingLeft(c) })) return;
+    const citizenAsset = assets['citizen_sprite'];
+    if (citizenAsset) {
+        if (rebel) {
+            ctx.globalAlpha = 0.85;
+            _drawFacingSprite(ctx, citizenAsset, c, dx, dy);
+            ctx.fillStyle = 'rgba(200,30,30,0.55)';
+            ctx.beginPath(); ctx.arc(dx, dy, 8, 0, Math.PI * 2); ctx.fill();
+            ctx.globalAlpha = 1.0;
+        } else {
+            _drawFacingSprite(ctx, citizenAsset, c, dx, dy);
+        }
+    } else {
+        ctx.fillStyle = rebel ? '#cc2222' : '#ffdd57';
+        ctx.beginPath(); ctx.arc(dx, dy, rebel ? 5 : 4, 0, Math.PI * 2); ctx.fill();
+    }
+}
+
+function _drawSoldierTiny(ctx, assets, sol, now, zoom) {
+    const moved = _movedSinceDraw(sol, sol.x, sol.y);
+    const attacking = (now - (sol._meleeT || -99)) < 0.3;
+    const anim = attacking ? 'attack' : (moved ? 'run' : 'idle');
+    let key = SPRITE_FOR.soldier, scaleMul = 1;
+    if (sol.isCaptain) { key = SPRITE_FOR.captain; scaleMul = 1.25; }
+    else if (sol.isMilitia) key = SPRITE_FOR.militia;
+    if (sol.isCaptain) {
+        ctx.strokeStyle = '#ffd700';
+        ctx.lineWidth = 1.5 / zoom;
+        ctx.beginPath(); ctx.arc(sol.x, sol.y, 11, 0, Math.PI * 2); ctx.stroke();
+    }
+    if (drawSprite(ctx, key, anim, now, sol.x, sol.y, { flipX: _facingLeft(sol), scaleMul })) return;
+    const soldierAsset = assets['citizen_soldier'];
+    const militiaAsset = assets['citizen_sprite'];
+    if (sol.isMilitia) {
+        if (militiaAsset) _drawFacingSprite(ctx, militiaAsset, sol, sol.x, sol.y);
+        else { ctx.fillStyle = '#ffdd57'; ctx.beginPath(); ctx.arc(sol.x, sol.y, 4, 0, Math.PI * 2); ctx.fill(); }
+        ctx.strokeStyle = '#6b4a2a';
+        ctx.lineWidth = 2 / zoom;
+        ctx.beginPath();
+        ctx.moveTo(sol.x + 4, sol.y - 9);
+        ctx.lineTo(sol.x + 8, sol.y + 7);
+        ctx.stroke();
+    } else if (soldierAsset) {
+        _drawFacingSprite(ctx, soldierAsset, sol, sol.x, sol.y, sol.isCaptain ? 20 : 16);
+    } else {
+        ctx.fillStyle = '#1a3a6a';
+        ctx.beginPath(); ctx.arc(sol.x, sol.y, 6, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#ffdd57'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(sol.x, sol.y, 6, 0, Math.PI * 2); ctx.stroke();
+    }
+}
+
+function _drawArcherTiny(ctx, assets, a, now) {
+    const moved = _movedSinceDraw(a, a.x, a.y);
+    const anim = (now - (a._shootT || -99)) < 0.6 ? 'shoot' : (moved ? 'run' : 'idle');
+    if (drawSprite(ctx, SPRITE_FOR.archer, anim, now, a.x, a.y, { flipX: _facingLeft(a) })) return;
+    const archerAsset = assets['citizen_archer'];
+    if (archerAsset) {
+        _drawFacingSprite(ctx, archerAsset, a, a.x, a.y);
+    } else {
+        ctx.fillStyle = '#00ccaa';
+        ctx.beginPath(); ctx.arc(a.x, a.y, 5, 0, Math.PI * 2); ctx.fill();
+    }
+}
+
+function _drawKnightTiny(ctx, assets, k, now) {
+    const moved = _movedSinceDraw(k, k.x, k.y);
+    const attacking = (now - (k._meleeT || -99)) < 0.3;
+    const anim = attacking ? 'attack' : (moved ? 'run' : 'idle');
+    if (drawSprite(ctx, SPRITE_FOR.knight, anim, now, k.x, k.y, { flipX: _facingLeft(k) })) return;
+    const knightAsset = assets['citizen_knight'];
+    if (knightAsset) {
+        _drawFacingSprite(ctx, knightAsset, k, k.x, k.y);
+    } else {
+        ctx.fillStyle = '#cc8800';
+        ctx.beginPath(); ctx.arc(k.x, k.y, 6, 0, Math.PI * 2); ctx.fill();
+    }
+}
+
+function _drawRaiderTiny(ctx, assets, r, now) {
+    const moved = _movedSinceDraw(r, r.x, r.y);
+    let key = SPRITE_FOR.raider_normal;
+    if (r.isCampGuard) key = SPRITE_FOR.camp_guard;
+    else if (r.type === 'torch') key = SPRITE_FOR.raider_torch;
+    else if (r.type === 'siege') key = SPRITE_FOR.raider_siege;
+    let anim = moved ? 'run' : 'idle';
+    if (r._attacking) anim = (r.type === 'siege' && !r.isCampGuard) ? 'throw' : 'attack';
+    if (r.targetX < r.x - 0.5) r._facingLeft = true;
+    else if (r.targetX > r.x + 0.5) r._facingLeft = false;
+    if (r._attacking) {
+        const pulse = 0.45 + 0.55 * Math.abs(Math.sin(now * 1000 / 120));
+        ctx.strokeStyle = 'rgba(255, 80, 0, ' + pulse.toFixed(3) + ')';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, 11, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+    if (drawSprite(ctx, key, anim, now, r.x, r.y,
+            { flipX: !!r._facingLeft, rotation: r._rotation || 0, alpha: r._alpha })) return;
+    const raiderAsset = r.type === 'torch' ? assets['enemy_torch_raider']
+                      : r.type === 'siege' ? assets['enemy_siege_raider']
+                      : assets['enemy_raider'];
+    ctx.save();
+    ctx.globalAlpha = r._alpha;
+    ctx.translate(r.x, r.y);
+    if (r._rotation) ctx.rotate(r._rotation);
+    if (raiderAsset) {
+        if (r._facingLeft) ctx.scale(-1, 1);
+        ctx.drawImage(raiderAsset, -8, -8, 16, 16);
+    } else {
+        ctx.fillStyle = '#ff0000';
+        ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#000000'; ctx.lineWidth = 1; ctx.stroke();
+    }
+    ctx.restore();
+}
+
+function _drawMerchantTiny(ctx, assets, m, now) {
+    const lastX = m._sprLX;
+    _movedSinceDraw(m, m.x, m.y);
+    if (lastX !== undefined) {
+        if (m.x < lastX - 0.05) m._facingLeft = true;
+        else if (m.x > lastX + 0.05) m._facingLeft = false;
+    }
+    const moving = m.state === 'approaching' || m.state === 'departing';
+    if (drawSprite(ctx, SPRITE_FOR.merchant, moving ? 'carry_run' : 'carry_idle',
+            now, m.x, m.y, { flipX: !!m._facingLeft })) return;
+    const merchantAsset = assets['npc_merchant'];
+    if (merchantAsset) {
+        ctx.drawImage(merchantAsset, m.x - 8, m.y - 8, 16, 16);
+    } else {
+        ctx.fillStyle = '#cc8844';
+        ctx.fillRect(m.x - 8, m.y - 8, 16, 16);
+    }
+}
+
+function _drawCampTiny(ctx, assets, camp, zoom) {
+    const drew = drawSprite(ctx, SPRITE_FOR.camp, 'idle', 0, camp.x, camp.y + TILE_SIZE / 2);
+    if (!drew) {
+        ctx.fillStyle = '#4a2c1a';
+        ctx.beginPath();
+        ctx.moveTo(camp.x, camp.y - 13);
+        ctx.lineTo(camp.x + 12, camp.y + 8);
+        ctx.lineTo(camp.x - 12, camp.y + 8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = '#2a180c';
+        ctx.lineWidth = 1.5 / zoom;
+        ctx.stroke();
+        ctx.fillStyle = '#20120a';
+        ctx.fillRect(camp.x - 3, camp.y - 1, 6, 9);
+    }
+    // Banner pole + flag and the damaged HP bar stay for readability.
+    ctx.strokeStyle = '#332211';
+    ctx.lineWidth = 1.5 / zoom;
+    ctx.beginPath(); ctx.moveTo(camp.x + 10, camp.y - 18); ctx.lineTo(camp.x + 10, camp.y + 2); ctx.stroke();
+    ctx.fillStyle = '#cc2222';
+    ctx.fillRect(camp.x + 10, camp.y - 18, 9, 5);
+    if (camp.hp < camp.maxHp) {
+        const bw = 26;
+        ctx.fillStyle = '#333333';
+        ctx.fillRect(camp.x - bw / 2, camp.y - 22, bw, 3);
+        ctx.fillStyle = '#ff4444';
+        ctx.fillRect(camp.x - bw / 2, camp.y - 22, bw * Math.max(0, camp.hp / camp.maxHp), 3);
+    }
+}
+
+function _drawSheepTiny(ctx, sh, now) {
+    drawSprite(ctx, 'sheep_idle', 'idle', now + (sh.phase || 0), sh.x, sh.y, { flipX: !!sh.flip });
+}
+
+function _drawEntry(ctx, assets, e, now, zoom) {
+    switch (e.k) {
+        case DK_STRUCT: _drawStructTiny(ctx, assets, e.o, e.tx, e.ty); break;
+        case DK_NATURE: _drawNatureTiny(ctx, assets, e.o, e.tx, e.ty, now); break;
+        case DK_CIT: _drawCitizenTiny(ctx, assets, e.o, now); break;
+        case DK_SOL: _drawSoldierTiny(ctx, assets, e.o, now, zoom); break;
+        case DK_ARC: _drawArcherTiny(ctx, assets, e.o, now); break;
+        case DK_KNI: _drawKnightTiny(ctx, assets, e.o, now, zoom); break;
+        case DK_RAID: _drawRaiderTiny(ctx, assets, e.o, now); break;
+        case DK_CAMP: _drawCampTiny(ctx, assets, e.o, zoom); break;
+        case DK_MERCH: _drawMerchantTiny(ctx, assets, e.o, now); break;
+        default: _drawSheepTiny(ctx, e.o, now); break;
+    }
+}
+
+// Collect every visible drawable into the reused _drawList. Bounds already
+// include a 1–3 tile margin so tall sprites overlapping the viewport are kept.
+function _collectDrawList(x0, x1, y0, y1, viewMinX, viewMinY, viewMaxX, viewMaxY) {
+    const grid = sim.grid;
+    for (let ty = y0; ty <= y1; ty++) {
+        const row = grid.structures[ty];
+        for (let tx = x0; tx <= x1; tx++) {
+            const s = row[tx];
+            if (!s || s.isChild) continue;
+            const key = s.def.key;
+            if (key === 'obstacle_tree' || key === 'stone_deposit' || key === 'iron_vein') {
+                _emitDraw(DK_NATURE, (ty + 1) * TILE_SIZE, s, tx, ty);
+            } else {
+                _emitDraw(DK_STRUCT, (ty + (s.def.height || 1)) * TILE_SIZE, s, tx, ty);
+            }
+        }
+    }
+    for (let i = 0; i < citizens.length; i++) {
+        const c = citizens[i];
+        if (c.job === 'hiding' && c._phase === 'hidden') continue;
+        const dx = (typeof c.renderX === 'function') ? c.renderX() : c.x;
+        const dy = (typeof c.renderY === 'function') ? c.renderY() : c.y;
+        if (dx < viewMinX || dx > viewMaxX || dy < viewMinY || dy > viewMaxY) continue;
+        _emitDraw(DK_CIT, dy, c, 0, 0);
+    }
+    const unitLists = [[soldiers, DK_SOL, 200], [archers, DK_ARC, 150], [knights, DK_KNI, 100]];
+    for (let li = 0; li < unitLists.length; li++) {
+        const list = unitLists[li][0], kind = unitLists[li][1], cap = unitLists[li][2];
+        let n = 0;
+        for (let i = 0; i < list.length; i++) {
+            const u = list[i];
+            if (u.x < viewMinX || u.x > viewMaxX || u.y < viewMinY || u.y > viewMaxY) continue;
+            if (n++ >= cap) break;
+            _emitDraw(kind, u.y, u, 0, 0);
+        }
+    }
+    let rn = 0;
+    for (let i = 0; i < raiders.length; i++) {
+        const r = raiders[i];
+        if (r.x < viewMinX || r.x > viewMaxX || r.y < viewMinY || r.y > viewMaxY) continue;
+        if (rn++ >= 300) break;
+        _emitDraw(DK_RAID, r.y, r, 0, 0);
+    }
+    const camps = sim.raiderCamps || [];
+    for (let i = 0; i < camps.length; i++) {
+        const camp = camps[i];
+        if (camp.x < viewMinX || camp.x > viewMaxX || camp.y < viewMinY || camp.y > viewMaxY) continue;
+        _emitDraw(DK_CAMP, camp.y + TILE_SIZE / 2, camp, 0, 0);
+    }
+    const m = sim.merchantNPC;
+    if (m && m.state !== 'done' && m.x >= viewMinX && m.x <= viewMaxX && m.y >= viewMinY && m.y <= viewMaxY) {
+        _emitDraw(DK_MERCH, m.y, m, 0, 0);
+    }
+    const sheep = window.__pdSheep;
+    if (sheep) {
+        for (let i = 0; i < sheep.length; i++) {
+            const sh = sheep[i];
+            if (sh.x < viewMinX || sh.x > viewMaxX || sh.y < viewMinY || sh.y > viewMaxY) continue;
+            _emitDraw(DK_SHEEP, sh.y, sh, 0, 0);
+        }
+    }
+}
+
 export class GameGrid {
     constructor(width = GRID_WIDTH, height = GRID_HEIGHT, seed) {
         this.width = width;
@@ -66,6 +431,7 @@ export class GameGrid {
         this.structures = this._initStructures();
         this._spawnTrees();
         this._spawnOutcrops();
+        this.generateDeco();
     }
 
     regenerate(seed) {
@@ -76,6 +442,29 @@ export class GameGrid {
         this.tiles = this._generateTiles();
         this._spawnTrees();
         this._spawnOutcrops();
+        this.generateDeco();
+    }
+
+    // Purely visual scenery: ~7% of empty grass tiles get a deco sprite, picked
+    // with a seeded RNG so the same map seed always grows the same scenery.
+    // Deco never blocks placement; it is cleared when a structure/road lands on it.
+    generateDeco() {
+        this.deco = Array.from({ length: this.height }, () => new Array(this.width).fill(0));
+        const rng = makeSeededRng(this.seed + ':deco');
+        for (let ty = 0; ty < this.height; ty++) {
+            for (let tx = 0; tx < this.width; tx++) {
+                if (this.tiles[ty][tx] !== 'tile_grass' || this.structures[ty][tx]) continue;
+                if (rng() >= 0.07) continue;
+                const r = rng();
+                let n;
+                if (r < 0.40) n = 7 + Math.floor(rng() * 3);       // bushes 07–09
+                else if (r < 0.60) n = 4 + Math.floor(rng() * 2);  // small rocks 04–05
+                else if (r < 0.75) n = 1 + Math.floor(rng() * 3);  // mushrooms 01–03
+                else if (r < 0.90) n = 10 + Math.floor(rng() * 2); // sprouts 10–11
+                else n = 12 + Math.floor(rng() * 2);               // pumpkins 12–13
+                this.deco[ty][tx] = n;
+            }
+        }
     }
 
     _generateTiles() {
@@ -216,10 +605,12 @@ export class GameGrid {
         const canvasW = ctx.canvas.width;
         const canvasH = ctx.canvas.height;
 
-        const startX = Math.max(0, Math.floor(camX / TILE_SIZE));
-        const startY = Math.max(0, Math.floor(camY / TILE_SIZE));
-        const endX = Math.min(this.width - 1, Math.ceil((camX + canvasW / zoom) / TILE_SIZE));
-        const endY = Math.min(this.height - 1, Math.ceil((camY + canvasH / zoom) / TILE_SIZE));
+        // Tile bounds carry a margin so tall sprites overlapping the viewport edge
+        // are still collected into the depth-sorted pass (towers reach ~3 tiles up).
+        const startX = Math.max(0, Math.floor(camX / TILE_SIZE) - 1);
+        const startY = Math.max(0, Math.floor(camY / TILE_SIZE) - 3);
+        const endX = Math.min(this.width - 1, Math.ceil((camX + canvasW / zoom) / TILE_SIZE) + 1);
+        const endY = Math.min(this.height - 1, Math.ceil((camY + canvasH / zoom) / TILE_SIZE) + 1);
 
         ctx.save();
         ctx.setTransform(zoom, 0, 0, zoom, -camX * zoom, -camY * zoom);
@@ -247,54 +638,27 @@ export class GameGrid {
             }
         }
 
-        // Draw dynamic / under-construction / active structures on top
+        // Depth-sorted world pass: structures, nature, units, camps, merchant and
+        // sheep in one list ordered by ground-y (units hide behind tall towers).
+        _collectDrawList(startX, endX, startY, endY,
+            camX - 96, camY - 96, camX + canvasW / zoom + 96, camY + canvasH / zoom + 96);
+        _drawList.sort(_drawCmp);
+        const _nowSec = performance.now() / 1000;
+        for (let _di = 0; _di < _drawList.length; _di++) {
+            _drawEntry(ctx, assets, _drawList[_di], _nowSec, zoom);
+        }
+        for (let _di = 0; _di < _drawList.length; _di++) _drawFree.push(_drawList[_di]);
+        _drawList.length = 0;
+
+        // Overlays drawn after the sorted pass: structure HP / construction /
+        // research bars and the locked-gate padlock.
         for (let ty = startY; ty <= endY; ty++) {
             for (let tx = startX; tx <= endX; tx++) {
                 const s = this.structures[ty][tx];
                 if (!s || s.isChild) continue;
                 const key = s.def.key;
-                
-                const isDynamic = (key === 'monument' || key === 'academy' || key === 'tower' || key === 'ballista_tower' || key === 'gate');
-                const isUnderConstruction = (s.progress ?? 1.0) < 1.0;
-                
-                // If it is static and complete, it was already drawn to staticCanvas
-                if (_staticCanvas && !isDynamic && !isUnderConstruction) {
-                    // Check if it is damaged; if damaged, we still need to draw the HP bar
-                    if (s.hp !== undefined && !window._NON_BURNABLE.has(key)) {
-                        const maxHp = getMaxHP(key, tx, ty);
-                        const hpPct = Math.max(0, s.hp / maxHp);
-                        if (hpPct < 1.0) {
-                            const renderW = (s.def.width || 1) * TILE_SIZE;
-                            const renderH = (s.def.height || 1) * TILE_SIZE;
-                            ctx.fillStyle = 'rgba(0,0,0,0.6)';
-                            ctx.fillRect(tx * TILE_SIZE + 1, ty * TILE_SIZE + renderH - 4, renderW - 2, 3);
-                            ctx.fillStyle = hpPct > 0.6 ? '#44cc44' : hpPct > 0.3 ? '#ffaa00' : '#cc2222';
-                            ctx.fillRect(tx * TILE_SIZE + 1, ty * TILE_SIZE + renderH - 4, (renderW - 2) * hpPct, 3);
-                        }
-                    }
-                    continue; 
-                }
-
-                const assetKey = key === 'gate'
-                    ? (s.gateOpen !== false ? 'building_gate_open' : 'building_gate_closed')
-                    : s.def.assetKey;
-                const asset = assets[assetKey];
-                const prog = s.progress ?? 1.0;
-                const w = s.def.width || 1;
-                const h = s.def.height || 1;
-                const renderW = w * TILE_SIZE;
-                const renderH = h * TILE_SIZE;
-                
-                if (asset) {
-                    if (prog < 1.0) ctx.globalAlpha = 0.4 + prog * 0.6;
-                    ctx.drawImage(asset, tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
-                    ctx.globalAlpha = 1.0;
-                } else {
-                    ctx.fillStyle = s.def.color;
-                    ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
-                }
-
-                // Padlock cue so manually locked gates are visually distinct
+                const renderW = (s.def.width || 1) * TILE_SIZE;
+                const renderH = (s.def.height || 1) * TILE_SIZE;
                 if (key === 'gate' && s.manuallyLocked) {
                     ctx.save();
                     ctx.font = `${10}px monospace`;
@@ -302,7 +666,7 @@ export class GameGrid {
                     ctx.fillText('🔒', tx * TILE_SIZE + TILE_SIZE / 2, ty * TILE_SIZE + 2);
                     ctx.restore();
                 }
-
+                const prog = s.progress ?? 1.0;
                 if (prog < 1.0) {
                     ctx.fillStyle = 'rgba(0,0,0,0.55)';
                     ctx.fillRect(tx * TILE_SIZE + 2, ty * TILE_SIZE + renderH - 6, renderW - 4, 4);
@@ -317,16 +681,50 @@ export class GameGrid {
                         ctx.fillStyle = hpPct > 0.6 ? '#44cc44' : hpPct > 0.3 ? '#ffaa00' : '#cc2222';
                         ctx.fillRect(tx * TILE_SIZE + 1, ty * TILE_SIZE + renderH - 4, (renderW - 2) * hpPct, 3);
                     }
-                } else {
-                    if (key === 'academy' && gameState.activeResearch) {
-                        const researchDur = gameState.activeResearch.duration ?? 15.0;
-                        const progressPct = (researchDur - gameState.activeResearch.timer) / researchDur;
-                        ctx.fillStyle = 'rgba(0,0,0,0.6)';
-                        ctx.fillRect(tx * TILE_SIZE + 2, ty * TILE_SIZE - 8, renderW - 4, 4);
-                        ctx.fillStyle = '#ffb300';
-                        ctx.fillRect(tx * TILE_SIZE + 2, ty * TILE_SIZE - 8, (renderW - 4) * progressPct, 4);
-                    }
+                } else if (key === 'academy' && gameState.activeResearch) {
+                    const researchDur = gameState.activeResearch.duration ?? 15.0;
+                    const progressPct = (researchDur - gameState.activeResearch.timer) / researchDur;
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(tx * TILE_SIZE + 2, ty * TILE_SIZE - 8, renderW - 4, 4);
+                    ctx.fillStyle = '#ffb300';
+                    ctx.fillRect(tx * TILE_SIZE + 2, ty * TILE_SIZE - 8, (renderW - 4) * progressPct, 4);
                 }
+            }
+        }
+
+        // Unit HP bars sit above the new, taller sprites (old offsets when the
+        // Tiny Swords sheet failed to load and the 16px fallback draws instead).
+        {
+            const tall = hasSprite(SPRITE_FOR.soldier);
+            const viewMinX = camX - 96, viewMinY = camY - 96;
+            const viewMaxX = camX + canvasW / zoom + 96, viewMaxY = camY + canvasH / zoom + 96;
+            const bar = (x, y, w, frac, color) => {
+                ctx.fillStyle = '#333333';
+                ctx.fillRect(x - w / 2, y, w, 2);
+                ctx.fillStyle = color;
+                ctx.fillRect(x - w / 2, y, w * frac, 2);
+            };
+            for (const sol of soldiers) {
+                if (sol.x < viewMinX || sol.x > viewMaxX || sol.y < viewMinY || sol.y > viewMaxY) continue;
+                const max = sol.maxHp || 100;
+                if (sol.hp >= max) continue;
+                bar(sol.x, sol.y - (tall ? (sol.isCaptain ? 58 : 50) : 12), 16, sol.hp / max, '#4488ff');
+            }
+            for (const a of archers) {
+                if (a.x < viewMinX || a.x > viewMaxX || a.y < viewMinY || a.y > viewMaxY) continue;
+                if (a.hp >= a.maxHp) continue;
+                bar(a.x, a.y - (tall ? 48 : 12), 14, a.hp / a.maxHp, '#00ccaa');
+            }
+            for (const k of knights) {
+                if (k.x < viewMinX || k.x > viewMaxX || k.y < viewMinY || k.y > viewMaxY) continue;
+                if (k.hp >= k.maxHp) continue;
+                bar(k.x, k.y - (tall ? 50 : 12), 16, k.hp / k.maxHp, '#cc8800');
+            }
+            for (const r of raiders) {
+                if (r.state !== 'walking' || r.x < viewMinX || r.x > viewMaxX || r.y < viewMinY || r.y > viewMaxY) continue;
+                const max = r.maxHp || (r.type === 'siege' ? 150 : 100);
+                if (r.hp >= max) continue;
+                bar(r.x, r.y - (tall ? 48 : 12), 16, r.hp / max, '#ff4444');
             }
         }
 
@@ -355,38 +753,6 @@ export class GameGrid {
         ctx.setLineDash([]);
         ctx.shadowBlur = 0;
 
-        const citizenAsset = assets['citizen_sprite'];
-        const viewMinX = camX - TILE_SIZE;
-        const viewMinY = camY - TILE_SIZE;
-        const viewMaxX = camX + canvasW / zoom + TILE_SIZE;
-        const viewMaxY = camY + canvasH / zoom + TILE_SIZE;
-        for (const c of citizens) {
-            const drawX = typeof c.renderX === 'function' ? c.renderX() : c.x;
-            const drawY = typeof c.renderY === 'function' ? c.renderY() : c.y;
-            if (drawX < viewMinX || drawX > viewMaxX || drawY < viewMinY || drawY > viewMaxY) continue;
-            if (c.job === 'rebel') {
-                // Red tint for rebels
-                ctx.globalAlpha = 0.85;
-                if (citizenAsset) {
-                    ctx.globalCompositeOperation = 'source-over';
-                    _drawFacingSprite(ctx, citizenAsset, c, drawX, drawY);
-                    ctx.fillStyle = 'rgba(200,30,30,0.55)';
-                    ctx.beginPath(); ctx.arc(drawX, drawY, 8, 0, Math.PI * 2); ctx.fill();
-                } else {
-                    ctx.fillStyle = '#cc2222';
-                    ctx.beginPath(); ctx.arc(drawX, drawY, 5, 0, Math.PI * 2); ctx.fill();
-                }
-                ctx.globalAlpha = 1.0;
-            } else if (citizenAsset) {
-                _drawFacingSprite(ctx, citizenAsset, c, drawX, drawY);
-            } else {
-                ctx.fillStyle = '#ffdd57';
-                ctx.beginPath();
-                ctx.arc(drawX, drawY, 4, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-
         if (hoverTile && selectedTool && selectedTool !== 'demolish' && selectedTool !== 'clear' && selectedTool !== 'clear_rubble') {
             const { tx, ty } = hoverTile;
             if (this.inBounds(tx, ty)) {
@@ -407,12 +773,19 @@ export class GameGrid {
                     const inTerritory = Math.hypot(tx - 32, ty - 32) <= R;
                     const ok = placeable && affordable && inTerritory;
                     ctx.globalAlpha = 0.55;
-                    const asset = assets[def.assetKey];
-                    if (asset) {
-                        ctx.drawImage(asset, tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
+                    // Tiny Swords preview when one is mapped for this building.
+                    const ghostSpr = SPRITE_FOR[selectedTool];
+                    if (typeof ghostSpr === 'string' && hasSprite(ghostSpr)) {
+                        drawSprite(ctx, ghostSpr, 'idle', performance.now() / 1000,
+                            (tx + w / 2) * TILE_SIZE, (ty + h) * TILE_SIZE);
                     } else {
-                        ctx.fillStyle = def.color;
-                        ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
+                        const asset = assets[def.assetKey];
+                        if (asset) {
+                            ctx.drawImage(asset, tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
+                        } else {
+                            ctx.fillStyle = def.color;
+                            ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
+                        }
                     }
                     ctx.fillStyle = ok ? 'rgba(80, 220, 100, 0.28)' : 'rgba(220, 60, 40, 0.38)';
                     ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, renderW, renderH);
@@ -1296,6 +1669,10 @@ function renderBuildMenu(tab) {
         </div>`;
     }).join('');
     itemsEl.querySelectorAll('canvas[data-asset]').forEach(cv => {
+        // Tiny Swords icon when one is mapped for this tool, else the old icon.
+        const tool = cv.closest('.build-btn')?.dataset.tool;
+        const spr = tool ? ICON_FOR[tool] : null;
+        if (spr && hasSprite(spr) && drawSpriteIcon(cv, spr)) return;
         const key = cv.dataset.asset;
         if (!key || !sim.assets[key]) return;
         const ctx2 = cv.getContext('2d');
@@ -1470,6 +1847,19 @@ export function _buildGrassCache() {
     oc.width = W * T;
     oc.height = H * T;
     const octx = oc.getContext('2d');
+    if (hasTerrain()) {
+        // Tiny Swords grass CENTRE tile (1,1), 64→32 downscale with filtering.
+        octx.imageSmoothingEnabled = true;
+        octx.imageSmoothingQuality = 'high';
+        for (let ty = 0; ty < H; ty++) {
+            for (let tx = 0; tx < W; tx++) {
+                if (sim.grid.tiles[ty][tx] !== 'tile_grass') continue;
+                paintGrass(octx, tx * T, ty * T);
+            }
+        }
+        _grassCanvas = oc;
+        return;
+    }
     octx.imageSmoothingEnabled = false;
     for (let ty = 0; ty < H; ty++) {
         for (let tx = 0; tx < W; tx++) {
@@ -1532,8 +1922,10 @@ export function renderWorldOverlay() {
     }
     ctx.globalAlpha = 1.0;
 
-    // Physics projectiles (arrows and bolts)
+    // Physics projectiles: bolts keep their tracer; arrows are drawn as Tiny
+    // Swords sprites (rotated to the velocity) by the fx feature module.
     for (const p of activeProjectiles) {
+        if (p.type === 'arrow') continue;
         const trailX = p.x - p.vx * 0.05;
         const trailVy = p.vy - p.g * 0.05;
         const trailY = p.y - trailVy * 0.05;
@@ -1545,19 +1937,9 @@ export function renderWorldOverlay() {
         ctx.stroke();
     }
 
-    // Gate HP bars (when damaged)
-    for (const { tx, ty } of sim.activeGates) {
-        const s = sim.grid.structures[ty][tx];
-        const maxHp = getMaxHP('gate', tx, ty);
-        if (!s || (s.hp ?? maxHp) >= maxHp) continue;
-        const gx = tx * TILE_SIZE + TILE_SIZE / 2;
-        const gy = ty * TILE_SIZE;
-        const bw = TILE_SIZE - 4;
-        ctx.fillStyle = '#333333';
-        ctx.fillRect(gx - bw / 2, gy - 6, bw, 3);
-        ctx.fillStyle = '#ff6600';
-        ctx.fillRect(gx - bw / 2, gy - 6, bw * ((s.hp ?? maxHp) / maxHp), 3);
-    }
+    // Gate HP bars now draw in the GameGrid overlay pass (raised with the rest
+    // of the structure bars); particles, drought, badges and projectiles below
+    // keep their existing order after the sorted pass.
 
     // Batch particles by type so shared canvas state (fillStyle / strokeStyle / lineWidth /
     // font) is set once per group rather than re-set per particle. globalAlpha still varies
@@ -1600,113 +1982,11 @@ export function renderWorldOverlay() {
     }
     ctx.globalAlpha = 1.0;
 
-    const soldierAsset = sim.assets['citizen_soldier'];
-    const militiaAsset = sim.assets['citizen_sprite'];
-    let renderedSoldiers = 0;
-    for (const sol of soldiers) {
-        if (!isVisibleUnit(sol)) continue;
-        if (renderedSoldiers++ >= 200) break;
-        if (sol.isMilitia) {
-            // Militia fight in civilian clothes with a brown spear.
-            if (militiaAsset) {
-                _drawFacingSprite(ctx, militiaAsset, sol, sol.x, sol.y);
-            } else {
-                ctx.fillStyle = '#ffdd57';
-                ctx.beginPath(); ctx.arc(sol.x, sol.y, 4, 0, Math.PI * 2); ctx.fill();
-            }
-            ctx.strokeStyle = '#6b4a2a';
-            ctx.lineWidth = 2 / zoom;
-            ctx.beginPath();
-            ctx.moveTo(sol.x + 4, sol.y - 9);
-            ctx.lineTo(sol.x + 8, sol.y + 7);
-            ctx.stroke();
-        } else if (soldierAsset) {
-            if (sol.isCaptain) {
-                // Captain: larger sprite with a gold command ring
-                ctx.strokeStyle = '#ffd700';
-                ctx.lineWidth = 1.5 / zoom;
-                ctx.beginPath(); ctx.arc(sol.x, sol.y, 11, 0, Math.PI * 2); ctx.stroke();
-                _drawFacingSprite(ctx, soldierAsset, sol, sol.x, sol.y, 20);
-            } else {
-                _drawFacingSprite(ctx, soldierAsset, sol, sol.x, sol.y);
-            }
-        } else {
-            ctx.fillStyle = '#1a3a6a';
-            ctx.beginPath(); ctx.arc(sol.x, sol.y, 6, 0, Math.PI * 2); ctx.fill();
-            ctx.strokeStyle = '#ffdd57'; ctx.lineWidth = 1.5;
-            ctx.beginPath(); ctx.arc(sol.x, sol.y, 6, 0, Math.PI * 2); ctx.stroke();
-        }
-        const solMaxHp = sol.maxHp || 100;
-        if (sol.hp < solMaxHp) {
-            const bw = 16;
-            ctx.fillStyle = '#333333';
-            ctx.fillRect(sol.x - bw / 2, sol.y - 12, bw, 2);
-            ctx.fillStyle = '#4488ff';
-            ctx.fillRect(sol.x - bw / 2, sol.y - 12, bw * (sol.hp / solMaxHp), 2);
-        }
-    }
+    // Soldiers, archers and knights now draw inside the GameGrid depth-sorted
+    // pass (with HP bars raised above the taller sprites).
 
-    const archerAsset = sim.assets['citizen_archer'];
-    let renderedArchers = 0;
-    for (const a of archers) {
-        if (!isVisibleUnit(a)) continue;
-        if (renderedArchers++ >= 150) break;
-        if (archerAsset) {
-            _drawFacingSprite(ctx, archerAsset, a, a.x, a.y);
-        } else {
-            ctx.fillStyle = '#00ccaa';
-            ctx.beginPath(); ctx.arc(a.x, a.y, 5, 0, Math.PI * 2); ctx.fill();
-        }
-        if (a.hp < a.maxHp) {
-            const bw = 14;
-            ctx.fillStyle = '#333333';
-            ctx.fillRect(a.x - bw / 2, a.y - 12, bw, 2);
-            ctx.fillStyle = '#00ccaa';
-            ctx.fillRect(a.x - bw / 2, a.y - 12, bw * (a.hp / a.maxHp), 2);
-        }
-    }
-
-    const knightAsset = sim.assets['citizen_knight'];
-    let renderedKnights = 0;
-    for (const k of knights) {
-        if (!isVisibleUnit(k)) continue;
-        if (renderedKnights++ >= 100) break;
-        if (knightAsset) {
-            _drawFacingSprite(ctx, knightAsset, k, k.x, k.y);
-        } else {
-            ctx.fillStyle = '#cc8800';
-            ctx.beginPath(); ctx.arc(k.x, k.y, 6, 0, Math.PI * 2); ctx.fill();
-            ctx.strokeStyle = '#ffaa33'; ctx.lineWidth = 1.5 / zoom;
-            ctx.beginPath(); ctx.arc(k.x, k.y, 6, 0, Math.PI * 2); ctx.stroke();
-        }
-        if (k.hp < k.maxHp) {
-            const bw = 16;
-            ctx.fillStyle = '#333333';
-            ctx.fillRect(k.x - bw / 2, k.y - 12, bw, 2);
-            ctx.fillStyle = '#cc8800';
-            ctx.fillRect(k.x - bw / 2, k.y - 12, bw * (k.hp / k.maxHp), 2);
-        }
-    }
-
-    // Fire overlay
-    if (sim.incidentManager?.active?.type === 'fire') {
-        const fireAsset = sim.assets['effect_fire'];
-        const flicker = 0.75 + Math.sin(Date.now() / 100) * 0.25;
-        for (const fire of sim.incidentManager.active.fires) {
-            const fx = fire.tx * TILE_SIZE, fy = fire.ty * TILE_SIZE;
-            ctx.globalAlpha = flicker;
-            if (fireAsset) {
-                ctx.drawImage(fireAsset, fx, fy, TILE_SIZE, TILE_SIZE);
-            } else {
-                const r = Math.floor(200 + Math.random() * 55), g2 = Math.floor(50 + Math.random() * 80);
-                ctx.fillStyle = `rgba(${r},${g2},0,0.85)`;
-                ctx.fillRect(fx + 2, fy + 2, TILE_SIZE - 4, TILE_SIZE - 4);
-                ctx.fillStyle = `rgba(255,${Math.floor(150 + Math.random() * 100)},0,0.5)`;
-                ctx.fillRect(fx + 5, fy + 5, TILE_SIZE - 10, TILE_SIZE - 10);
-            }
-        }
-        ctx.globalAlpha = 1.0;
-    }
+    // Burning buildings now draw as Tiny Swords fire via the fx feature module
+    // (renderWorld hook); the old effect_fire tile wash is retired.
 
     // Drought overlay on farms using activeFarms
     if (sim.droughtActive) {
@@ -1754,97 +2034,11 @@ export function renderWorldOverlay() {
         }
     }
 
-    // Merchant NPC
-    if (sim.merchantNPC && sim.merchantNPC.state !== 'done') {
-        const merchantAsset = sim.assets['npc_merchant'];
-        if (merchantAsset) {
-            ctx.drawImage(merchantAsset, sim.merchantNPC.x - 8, sim.merchantNPC.y - 8, 16, 16);
-        } else {
-            ctx.fillStyle = '#cc8844';
-            ctx.fillRect(sim.merchantNPC.x - 8, sim.merchantNPC.y - 8, 16, 16);
-            ctx.strokeStyle = '#eecc77'; ctx.lineWidth = 1 / sim.camera.zoom;
-            ctx.strokeRect(sim.merchantNPC.x - 8, sim.merchantNPC.y - 8, 16, 16);
-        }
-    }
+    // Merchant NPC and raider camps now draw inside the GameGrid depth-sorted
+    // pass (merchant as a pawn, camps as goblin houses).
 
-    // Raider camps — tents beyond the border; razing them is ATTACK mode's job
-    for (const camp of (sim.raiderCamps || [])) {
-        if (camp.x < viewMinX || camp.x > viewMaxX || camp.y < viewMinY || camp.y > viewMaxY) continue;
-        ctx.fillStyle = '#4a2c1a';
-        ctx.beginPath();
-        ctx.moveTo(camp.x, camp.y - 13);
-        ctx.lineTo(camp.x + 12, camp.y + 8);
-        ctx.lineTo(camp.x - 12, camp.y + 8);
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = '#2a180c';
-        ctx.lineWidth = 1.5 / zoom;
-        ctx.stroke();
-        ctx.fillStyle = '#20120a';
-        ctx.fillRect(camp.x - 3, camp.y - 1, 6, 9); // entrance
-        // banner pole + flag
-        ctx.strokeStyle = '#332211';
-        ctx.beginPath(); ctx.moveTo(camp.x + 10, camp.y - 18); ctx.lineTo(camp.x + 10, camp.y + 2); ctx.stroke();
-        ctx.fillStyle = '#cc2222';
-        ctx.fillRect(camp.x + 10, camp.y - 18, 9, 5);
-        // HP bar when damaged
-        if (camp.hp < camp.maxHp) {
-            const bw = 26;
-            ctx.fillStyle = '#333333';
-            ctx.fillRect(camp.x - bw / 2, camp.y - 22, bw, 3);
-            ctx.fillStyle = '#ff4444';
-            ctx.fillRect(camp.x - bw / 2, camp.y - 22, bw * Math.max(0, camp.hp / camp.maxHp), 3);
-        }
-    }
-
-    let renderedRaiders = 0;
-    for (const r of raiders) {
-        if (!isVisibleUnit(r)) continue;
-        // Covers the largest endless-mode wave plus two capped camp garrisons.
-        if (renderedRaiders++ >= 300) break;
-        const raiderAsset = r.type === 'torch' ? sim.assets['enemy_torch_raider']
-                          : r.type === 'siege' ? sim.assets['enemy_siege_raider']
-                          : sim.assets['enemy_raider'];
-        ctx.save();
-        ctx.globalAlpha = r._alpha;
-        ctx.translate(r.x, r.y);
-        // Victory-defeat spin effect only (main.js updateEffects), so raiders
-        // keep their feet facing down while walking and only spin out on defeat.
-        if (r._rotation) ctx.rotate(r._rotation);
-        if (r._attacking) {
-            const pulse = 0.45 + 0.55 * Math.abs(Math.sin(Date.now() / 120));
-            ctx.strokeStyle = `rgba(255, 80, 0, ${pulse})`;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(0, 0, 11, 0, Math.PI * 2);
-            ctx.stroke();
-        }
-        if (raiderAsset) {
-            // Facing flip inside the (translated) raider frame; the victory
-            // spin (rotation above) composes with it naturally.
-            if (r.targetX < r.x - 0.5) r._facingLeft = true;
-            else if (r.targetX > r.x + 0.5) r._facingLeft = false;
-            if (r._facingLeft) ctx.scale(-1, 1);
-            ctx.drawImage(raiderAsset, -8, -8, 16, 16);
-        } else {
-            ctx.fillStyle = '#ff0000';
-            ctx.beginPath();
-            ctx.arc(0, 0, 5, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#000000';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-        }
-        ctx.restore();
-        const _rMaxHp = r.maxHp || (r.type === 'siege' ? 150 : 100);
-        if (r.state === 'walking' && r.hp < _rMaxHp) {
-            const bw = 16;
-            ctx.fillStyle = '#333333';
-            ctx.fillRect(r.x - bw / 2, r.y - 12, bw, 2);
-            ctx.fillStyle = '#ff4444';
-            ctx.fillRect(r.x - bw / 2, r.y - 12, bw * (r.hp / _rMaxHp), 2);
-        }
-    }
+    // Raiders now draw inside the GameGrid depth-sorted pass (torch/torch/tnt
+    // sprites, victory spin and defeat slide preserved via rotation/alpha).
 
     runHook('renderWorld', ctx);
     ctx.restore();
@@ -2009,7 +2203,9 @@ export function _buildStaticCache() {
     oc.width = W * T;
     oc.height = H * T;
     const octx = oc.getContext('2d');
-    octx.imageSmoothingEnabled = false;
+    // Filtered downscales (64→32 tilemap art) stay clean; nothing else baked here.
+    octx.imageSmoothingEnabled = true;
+    octx.imageSmoothingQuality = 'high';
 
     // Draw grass background from _grassCanvas
     if (_grassCanvas) {
@@ -2019,41 +2215,40 @@ export function _buildStaticCache() {
         if (_grassCanvas) octx.drawImage(_grassCanvas, 0, 0);
     }
 
-    // Draw non-grass tiles (roads, dirt)
-    for (let ty = 0; ty < H; ty++) {
-        for (let tx = 0; tx < W; tx++) {
-            const tile = grid.tiles[ty][tx];
-            if (tile !== 'tile_grass') {
-                const asset = assets[tile];
-                if (asset) octx.drawImage(asset, tx * T, ty * T, T, T);
-            }
-        }
-    }
-
-    // Draw static structures
-    for (let ty = 0; ty < H; ty++) {
-        for (let tx = 0; tx < W; tx++) {
-            const s = grid.structures[ty][tx];
-            if (!s || s.isChild) continue;
-            const key = s.def.key;
-            // monument, academy, tower, ballista_tower, gate are dynamic
-            if (key === 'monument' || key === 'academy' || key === 'tower' || key === 'ballista_tower' || key === 'gate') continue;
-            // Draw complete structures
-            if ((s.progress ?? 1.0) >= 1.0) {
-                const assetKey = s.def.assetKey;
-                const asset = assets[assetKey];
-                const w = s.def.width || 1;
-                const h = s.def.height || 1;
-                if (asset) {
-                    octx.drawImage(asset, tx * T, ty * T, w * T, h * T);
-                } else {
-                    octx.fillStyle = s.def.color;
-                    octx.fillRect(tx * T, ty * T, w * T, h * T);
-                }
-            }
-        }
-    }
+    // Terrain only: roads (sand-block autotile) and deco scatter. Structures
+    // draw per-frame in the depth-sorted pass so tall sprites can overlap units.
+    _paintTerrainInto(octx, 0, 0, W - 1, H - 1);
     _staticCanvas = oc;
+}
+
+// Paint grass/roads/deco for a tile rectangle into a static-canvas context.
+function _paintTerrainInto(octx, x0, y0, x1, y1) {
+    const grid = sim.grid;
+    const assets = sim.assets;
+    const T = TILE_SIZE;
+    const useTinyRoads = hasTerrain();
+    for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+            const tile = grid.tiles[y][x];
+            if (tile === 'tile_road' && useTinyRoads) {
+                paintRoad(octx,
+                    grid.inBounds(x, y - 1) && grid.tiles[y - 1][x] === 'tile_road',
+                    grid.inBounds(x + 1, y) && grid.tiles[y][x + 1] === 'tile_road',
+                    grid.inBounds(x, y + 1) && grid.tiles[y + 1][x] === 'tile_road',
+                    grid.inBounds(x - 1, y) && grid.tiles[y][x - 1] === 'tile_road',
+                    x * T, y * T);
+            } else if (tile !== 'tile_grass' && assets[tile]) {
+                octx.drawImage(assets[tile], x * T, y * T, T, T);
+            } else if (tile !== 'tile_grass' && _grassCanvas) {
+                octx.drawImage(_grassCanvas, x * T, y * T, T, T, x * T, y * T, T, T);
+            }
+            // Deco is purely visual scenery on empty grass tiles.
+            const d = grid.deco && grid.deco[y] ? grid.deco[y][x] : 0;
+            if (d && tile === 'tile_grass' && !grid.structures[y][x]) {
+                paintDeco(octx, d, x * T, y * T);
+            }
+        }
+    }
 }
 
 // Repaint only the tiles around a mutated structure instead of re-rendering the
@@ -2065,7 +2260,8 @@ export function patchStaticCache(tx, ty, w = 1, h = 1) {
     if (!_staticCanvas || !sim.grid || !assets) return; // full build happens at init/load
     const T = TILE_SIZE;
     const octx = _staticCanvas.getContext('2d');
-    octx.imageSmoothingEnabled = false;
+    octx.imageSmoothingEnabled = true;
+    octx.imageSmoothingQuality = 'high';
     const x0 = Math.max(0, tx - 1), y0 = Math.max(0, ty - 1);
     const x1 = Math.min(sim.grid.width - 1, tx + w), y1 = Math.min(sim.grid.height - 1, ty + h);
     octx.clearRect(x0 * T, y0 * T, (x1 - x0 + 1) * T, (y1 - y0 + 1) * T);
@@ -2074,29 +2270,16 @@ export function patchStaticCache(tx, ty, w = 1, h = 1) {
             x0 * T, y0 * T, (x1 - x0 + 1) * T, (y1 - y0 + 1) * T,
             x0 * T, y0 * T, (x1 - x0 + 1) * T, (y1 - y0 + 1) * T);
     }
+    // Deco under a new structure/road is trampled (cleared + repainted as bare
+    // terrain). The 1-tile pad repaints road autotiles around the mutation.
     for (let y = y0; y <= y1; y++) {
         for (let x = x0; x <= x1; x++) {
-            const tile = sim.grid.tiles[y][x];
-            if (tile !== 'tile_grass' && assets[tile]) {
-                octx.drawImage(assets[tile], x * T, y * T, T, T);
-            }
-            const s = sim.grid.structures[y][x];
-            if (!s || s.isChild) continue;
-            const key = s.def.key;
-            // Dynamic buildings are drawn per-frame on top of the static layer
-            if (key === 'monument' || key === 'academy' || key === 'tower' || key === 'ballista_tower' || key === 'gate') continue;
-            if ((s.progress ?? 1.0) < 1.0) continue;
-            const asset = assets[s.def.assetKey];
-            const sw = (s.def.width || 1) * T;
-            const sh = (s.def.height || 1) * T;
-            if (asset) {
-                octx.drawImage(asset, x * T, y * T, sw, sh);
-            } else {
-                octx.fillStyle = s.def.color;
-                octx.fillRect(x * T, y * T, sw, sh);
+            if (sim.grid.structures[y][x] || sim.grid.tiles[y][x] === 'tile_road') {
+                if (sim.grid.deco && sim.grid.deco[y]) sim.grid.deco[y][x] = 0;
             }
         }
     }
+    _paintTerrainInto(octx, x0, y0, x1, y1);
 }
 
 export function rebuildStructureLists() {
