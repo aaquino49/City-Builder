@@ -156,12 +156,33 @@ export const SPRITES = {
     goldmine_active: _still('assets/tinyswords/buildings/goldmine_active.png', { fitWidthTiles: 1.3 }),
     goldmine_inactive: _still('assets/tinyswords/buildings/goldmine_inactive.png', { fitWidthTiles: 1.3 }),
     goldmine_destroyed: _still('assets/tinyswords/buildings/goldmine_destroyed.png', { fitWidthTiles: 1.3 }),
+    // ---- custom buildings (G2: single-frame PNGs in assets/tinyswords/custom/) ----
+    academy: _still('assets/tinyswords/custom/academy.png', { fitWidthTiles: 1.15 }),
+    archery_range: _still('assets/tinyswords/custom/archery_range.png', { fitWidthTiles: 1.15 }),
+    ballista_tower: _still('assets/tinyswords/custom/ballista_tower.png', { fitWidthTiles: 1.15 }),
+    barracks: _still('assets/tinyswords/custom/barracks.png', { fitWidthTiles: 1.15 }),
+    farm: _still('assets/tinyswords/custom/farm.png', { fitWidthTiles: 1.2 }),
+    granary: _still('assets/tinyswords/custom/granary.png', { fitWidthTiles: 1.15 }),
+    lumberyard: _still('assets/tinyswords/custom/lumberyard.png', { fitWidthTiles: 1.15 }),
+    market: _still('assets/tinyswords/custom/market.png', { fitWidthTiles: 1.15 }),
+    quarry: _still('assets/tinyswords/custom/quarry.png', { fitWidthTiles: 1.25 }),
+    tavern: _still('assets/tinyswords/custom/tavern.png', { fitWidthTiles: 1.15 }),
+    iron_vein: _still('assets/tinyswords/custom/iron_vein.png', { fitWidthTiles: 0.8 }),
+    // ---- custom walls & gates (G2: drawn connected; see ui.js wall pass) ----
+    wall_post: _still('assets/tinyswords/custom/wall_post.png', { fitWidthTiles: 0.95 }),
+    wall_h: _still('assets/tinyswords/custom/wall_h.png', { fitWidthTiles: 1.0 }),
+    wall_v_top: _still('assets/tinyswords/custom/wall_v_top.png', { fitWidthTiles: 0.7 }),
+    wall_v_mid: _still('assets/tinyswords/custom/wall_v_mid.png', { fitWidthTiles: 0.7 }),
+    wall_v_bottom: _still('assets/tinyswords/custom/wall_v_bottom.png', { fitWidthTiles: 0.7 }),
+    gate_closed: _still('assets/tinyswords/custom/gate_closed.png', { fitWidthTiles: 1.0 }),
+    gate_open: _still('assets/tinyswords/custom/gate_open.png', { fitWidthTiles: 1.0 }),
     // ---- terrain sheet + deco (painted directly, not via drawSprite) ----
     terrain_flat: { src: 'assets/tinyswords/terrain/tilemap_flat.png', frameW: 64, frameH: 64, anims: {}, size: null },
 };
 
-// Game-object → sprite mapping. Later work orders extend this table for the
-// remaining buildings (walls, gates, farm, lumberyard, quarry, ...).
+// Game-object → sprite mapping. Custom-building, wall and gate art lives in
+// assets/tinyswords/custom/ (G2). Only UI images (ui_logo / ui_event_banner)
+// and not-yet-mapped objects fall back to the old assets/sprites art.
 // Values may be a sprite key or a function returning one.
 export const SPRITE_FOR = {
     citizen: 'pawn_blue',
@@ -185,9 +206,28 @@ export const SPRITE_FOR = {
     monument: 'castle_blue',
     monument_construction: 'castle_construction',
     academy_construction: 'tower_construction',
+    academy: 'academy',
+    archery_range: 'archery_range',
+    ballista_tower: 'ballista_tower',
+    barracks: 'barracks',
+    farm: 'farm',
+    granary: 'granary',
+    lumberyard: 'lumberyard',
+    market: 'market',
+    tavern: 'tavern',
+    iron_vein: 'iron_vein',
+    wall: 'wall_post',
+    wall_h: 'wall_h',
+    wall_v_top: 'wall_v_top',
+    wall_v_mid: 'wall_v_mid',
+    wall_v_bottom: 'wall_v_bottom',
+    wall_post: 'wall_post',
+    gate: 'gate_closed',
+    gate_closed: 'gate_closed',
+    gate_open: 'gate_open',
     rubble: 'house_destroyed',
     mine: 'goldmine_active',
-    quarry: 'goldmine_inactive',
+    quarry: 'quarry',
     camp: 'goblin_house',
     // build-menu icons (+ train/clear tools)
     icon_train_soldier: 'warrior_blue',
@@ -199,10 +239,25 @@ export const SPRITE_FOR = {
 };
 
 // Build-menu tool key → sprite key for the 28px icon (undefined = old icon).
+// Every buildable now has Tiny Swords/custom art; road uses the sand centre
+// tile and is painted by drawRoadIcon() instead of drawSpriteIcon().
 export const ICON_FOR = {
     house: 'house_blue',
-    tower: 'tower_blue',
+    farm: 'farm',
+    granary: 'granary',
+    tavern: 'tavern',
+    market: 'market',
+    academy: 'academy',
     monument: 'castle_blue',
+    lumberyard: 'lumberyard',
+    quarry: 'quarry',
+    mine: 'goldmine_active',
+    wall: 'wall_post',
+    gate: 'gate_closed',
+    tower: 'tower_blue',
+    barracks: 'barracks',
+    archery_range: 'archery_range',
+    ballista_tower: 'ballista_tower',
     clear: 'tree',
     clear_rubble: 'house_destroyed',
     train_soldier: 'warrior_blue',
@@ -216,6 +271,14 @@ const _loaded = {};
 
 export function hasSprite(key) {
     return !!_loaded[key];
+}
+
+// Raw loaded image for custom painters (walls/gates) that need drawImage
+// control beyond drawSprite (exact tile-span stretches, multi-part stacks).
+// Returns null when the sprite hasn't loaded (caller falls back to old art).
+export function getSpriteImage(key) {
+    const rec = _loaded[key];
+    return rec ? rec.img : null;
 }
 
 function _loadImage(src) {
@@ -366,6 +429,25 @@ export function drawSprite(ctx, key, anim, timeSec, wx, wy, opts = {}) {
     return true;
 }
 
+// Road build-menu icon: the sand CENTRE tile (sheet cell col 6, row 1 — the
+// (1,1) centre of the sand block), cropped from tilemap_flat.png.
+export function drawRoadIcon(canvas) {
+    return drawTerrainIcon(canvas, 6, 1);
+}
+
+// Crop one 64×64 cell (col,row) of tilemap_flat.png into a small canvas icon.
+export function drawTerrainIcon(canvas, col, row) {
+    const rec = _loaded.terrain_flat;
+    if (!rec || !rec.img || !canvas) return false;
+    const g = canvas.getContext('2d');
+    if (!g) return false;
+    g.clearRect(0, 0, canvas.width, canvas.height);
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(rec.img, col * TERRAIN_TILE, row * TERRAIN_TILE, TERRAIN_TILE, TERRAIN_TILE,
+        0, 0, canvas.width, canvas.height);
+    return true;
+}
 // Frame-0 icon fitted into a small canvas (build-menu buttons).
 export function drawSpriteIcon(canvas, key) {
     const def = SPRITES[key];
@@ -434,6 +516,7 @@ export function paintDeco(octx, num, dx, dy) {
 
 Object.assign(window, {
     SPRITES, SPRITE_FOR, ICON_FOR,
-    loadSprites, hasSprite, drawSprite, drawSpriteIcon,
+    loadSprites, hasSprite, getSpriteImage, drawSprite, drawSpriteIcon,
+    drawRoadIcon, drawTerrainIcon,
     hasTerrain, paintTerrainCell, paintGrass, paintRoad, paintDeco,
 });

@@ -3,8 +3,8 @@ import {
     runHook,
 } from '../core/state.js';
 import {
-    SPRITE_FOR, ICON_FOR,
-    drawSprite, hasSprite, drawSpriteIcon,
+    SPRITES, SPRITE_FOR, ICON_FOR,
+    drawSprite, hasSprite, getSpriteImage, drawSpriteIcon, drawRoadIcon,
     hasTerrain, paintGrass, paintRoad, paintDeco,
 } from '../render/sprites.js';
 
@@ -103,22 +103,195 @@ function _structSpriteKey(s, tx, ty) {
     if (key === 'house') return sim.tier2Upgrades[tx + ',' + ty] ? SPRITE_FOR.house_t2 : SPRITE_FOR.house;
     if (key === 'tower') return sim.tier2Upgrades[tx + ',' + ty] ? SPRITE_FOR.tower_t2 : SPRITE_FOR.tower;
     if (key === 'monument') return (s.progress ?? 1.0) < 1.0 ? SPRITE_FOR.monument_construction : SPRITE_FOR.monument;
-    if (key === 'academy' && (s.progress ?? 1.0) < 1.0) return SPRITE_FOR.academy_construction;
+    if (key === 'academy') return (s.progress ?? 1.0) < 1.0 ? SPRITE_FOR.academy_construction : SPRITE_FOR.academy;
     if (key === 'rubble') return SPRITE_FOR.rubble;
     if (key === 'mine') return SPRITE_FOR.mine;
     if (key === 'quarry') return SPRITE_FOR.quarry;
+    if (key === 'archery_range') return SPRITE_FOR.archery_range;
+    if (key === 'ballista_tower') return SPRITE_FOR.ballista_tower;
+    if (key === 'barracks') return SPRITE_FOR.barracks;
+    if (key === 'farm') return SPRITE_FOR.farm;
+    if (key === 'granary') return SPRITE_FOR.granary;
+    if (key === 'lumberyard') return SPRITE_FOR.lumberyard;
+    if (key === 'market') return SPRITE_FOR.market;
+    if (key === 'tavern') return SPRITE_FOR.tavern;
     return null; // no Tiny Swords sprite yet — old sprite at today's size/position
+}
+
+// True when this building type offers a tier-2 upgrade AND this tile bought it.
+function _isTier2(key, tx, ty) {
+    const T2 = window.TIER2_UPGRADES;
+    return !!(T2 && T2[key] && sim.tier2Upgrades[tx + ',' + ty]);
+}
+
+// Small gold star badge for tier-2 buildings (no separate art). Outlined so it
+// reads on any background; drawn in world px so it scales with zoom.
+function _drawTier2Star(ctx, x, y, r = 4.5) {
+    ctx.save();
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+        const rr = i % 2 === 0 ? r : r * 0.45;
+        const a = -Math.PI / 2 + i * Math.PI / 5;
+        const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = '#ffd700';
+    ctx.fill();
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = '#5a3c00';
+    ctx.stroke();
+    ctx.restore();
+}
+
+// Badge at the drawn sprite's top-right. World width comes from the manifest
+// fitWidthTiles value; height keeps the source aspect (custom PNGs are cropped
+// to their opaque pixels, so the full image ≈ the bbox the scale was built on).
+function _drawTier2BadgeFor(ctx, sprKey, tx, ty, w = 1, h = 1) {
+    const img = getSpriteImage(sprKey);
+    const def = SPRITES[sprKey];
+    const fit = def && def.size ? def.size.fitWidthTiles : 0;
+    if (!img || !fit) {
+        _drawTier2Star(ctx, (tx + w) * TILE_SIZE - 5, ty * TILE_SIZE + 6);
+        return;
+    }
+    const iw = img.naturalWidth || 1, ih = img.naturalHeight || 1;
+    const worldW = fit * TILE_SIZE;
+    const worldH = worldW * (ih / iw);
+    const cx = (tx + w / 2) * TILE_SIZE;
+    const by = (ty + h) * TILE_SIZE;
+    _drawTier2Star(ctx, cx + worldW / 2 - 3, by - worldH + 4);
+}
+
+// ---- connected walls (G2): a wall tile's look depends on its 4 neighbours
+// (N/E/S/W) that are walls OR gates. Masks are cached in sim.wallMasks by
+// rebuildStructureLists (walls change rarely) rather than computed per frame.
+const WALL_N = 1, WALL_E = 2, WALL_S = 4, WALL_W = 8;
+function _isWallOrGateAt(tx, ty) {
+    if (!sim.grid || !sim.grid.inBounds(tx, ty)) return false;
+    let s = sim.grid.structures[ty] ? sim.grid.structures[ty][tx] : null;
+    if (!s) return false;
+    if (s.isChild) s = sim.grid.structures[s.parentY] ? sim.grid.structures[s.parentY][s.parentX] : null;
+    if (!s) return false;
+    return s.def.key === 'wall' || s.def.key === 'gate';
+}
+function _wallMaskLive(tx, ty) {
+    let m = 0;
+    if (_isWallOrGateAt(tx, ty - 1)) m |= WALL_N;
+    if (_isWallOrGateAt(tx + 1, ty)) m |= WALL_E;
+    if (_isWallOrGateAt(tx, ty + 1)) m |= WALL_S;
+    if (_isWallOrGateAt(tx - 1, ty)) m |= WALL_W;
+    return m;
+}
+function _wallMaskAt(tx, ty) {
+    if (sim.wallMasks) {
+        const m = sim.wallMasks[tx + ',' + ty];
+        if (m !== undefined) return m;
+    }
+    return _wallMaskLive(tx, ty);
+}
+function _recomputeWallMasks() {
+    // Live neighbour tests (never the old cache — a new wall changes the masks
+    // of the walls already standing next to it).
+    const masks = {};
+    const walls = sim.activeWalls || [];
+    const gates = sim.activeGates || [];
+    for (let i = 0; i < walls.length; i++) {
+        const { tx, ty } = walls[i];
+        masks[tx + ',' + ty] = _wallMaskLive(tx, ty);
+    }
+    for (let i = 0; i < gates.length; i++) {
+        const { tx, ty } = gates[i];
+        masks[tx + ',' + ty] = _wallMaskLive(tx, ty);
+    }
+    sim.wallMasks = masks;
+}
+// World-space wall painter (inside the camera transform). Returns false when
+// the custom art hasn't loaded, so the caller falls back to the old sprite.
+function _drawWallTiny(ctx, s, tx, ty) {
+    const mask = sim.wallMasks && sim.wallMasks[tx + ',' + ty] !== undefined
+        ? sim.wallMasks[tx + ',' + ty] : _wallMaskAt(tx, ty);
+    const hasH = !!(mask & (WALL_E | WALL_W));
+    const hasV = !!(mask & (WALL_N | WALL_S));
+    const x0 = tx * TILE_SIZE, y0 = ty * TILE_SIZE, y1 = y0 + TILE_SIZE;
+    if (hasH && !hasV) {
+        // Horizontal run: wall_h spans exactly one tile width, bottom on the
+        // tile's bottom edge. X/width snap to whole world px with a 1px overlap
+        // so runs look continuous at any zoom.
+        const img = getSpriteImage('wall_h');
+        if (!img || !hasSprite('wall_h')) return false;
+        const iw = img.naturalWidth || 62, ih = img.naturalHeight || 31;
+        const dx = Math.round(x0) - 0.5;
+        const dw = TILE_SIZE + 1;
+        const dh = dw * (ih / iw);
+        ctx.drawImage(img, dx, y1 - dh, dw, dh);
+        if (_isTier2('wall', tx, ty)) _drawTier2Star(ctx, x0 + TILE_SIZE - 4, y1 - dh + 4);
+        return true;
+    }
+    if (hasV && !hasH) {
+        // Vertical run: mid piece fills the tile; caps where the run ends.
+        const mid = getSpriteImage('wall_v_mid');
+        if (!mid || !hasSprite('wall_v_mid')) return false;
+        const w = Math.round(0.7 * TILE_SIZE);
+        const dx = Math.round((tx + 0.5) * TILE_SIZE - w / 2);
+        ctx.drawImage(mid, dx, y0, w, TILE_SIZE);
+        let topY = y0;
+        if (!(mask & WALL_N)) {
+            const top = getSpriteImage('wall_v_top');
+            if (top && hasSprite('wall_v_top')) {
+                const dh = w * ((top.naturalHeight || 38) / (top.naturalWidth || 44));
+                ctx.drawImage(top, dx, y0 - dh + 1, w, dh); // cap rises into the tile above
+                topY = y0 - dh + 1;
+            }
+        }
+        if (!(mask & WALL_S)) {
+            const bot = getSpriteImage('wall_v_bottom');
+            if (bot && hasSprite('wall_v_bottom')) {
+                const dh = w * ((bot.naturalHeight || 44) / (bot.naturalWidth || 44));
+                ctx.drawImage(bot, dx, y1 - dh, w, dh); // front face sits on the tile bottom
+            }
+        }
+        if (_isTier2('wall', tx, ty)) _drawTier2Star(ctx, dx + w - 2, topY + 5);
+        return true;
+    }
+    // Corner / T-junction / cross / isolated → wall_post.
+    const post = getSpriteImage('wall_post');
+    if (!post || !hasSprite('wall_post')) return false;
+    const dw = 0.95 * TILE_SIZE;
+    const dh = dw * ((post.naturalHeight || 75) / (post.naturalWidth || 56));
+    const dx = (tx + 0.5) * TILE_SIZE - dw / 2;
+    ctx.drawImage(post, dx, y1 - dh, dw, dh);
+    if (_isTier2('wall', tx, ty)) _drawTier2Star(ctx, dx + dw - 2, y1 - dh + 5);
+    return true;
+}
+function _drawGateTiny(ctx, s, tx, ty) {
+    const key = s.gateOpen !== false ? 'gate_open' : 'gate_closed';
+    const img = getSpriteImage(key);
+    if (!img || !hasSprite(key)) return false;
+    // Same footprint as wall_h (64 → TILE_SIZE wide), bottom on the tile bottom.
+    const dw = TILE_SIZE;
+    const dh = dw * ((img.naturalHeight || 63) / (img.naturalWidth || 64));
+    const y1 = (ty + 1) * TILE_SIZE;
+    ctx.drawImage(img, tx * TILE_SIZE, y1 - dh, dw, dh);
+    if (_isTier2('gate', tx, ty)) _drawTier2Star(ctx, tx * TILE_SIZE + TILE_SIZE - 4, y1 - dh + 4);
+    return true;
 }
 
 function _drawStructTiny(ctx, assets, s, tx, ty) {
     const w = s.def.width || 1;
     const h = s.def.height || 1;
+    const key = s.def.key;
+    // Connected walls and gates paint from the cached neighbour mask (HP bar,
+    // padlock and depth sort are handled by the shared passes around this).
+    if (key === 'wall' && _drawWallTiny(ctx, s, tx, ty)) return;
+    if (key === 'gate' && _drawGateTiny(ctx, s, tx, ty)) return;
     const spr = _structSpriteKey(s, tx, ty);
     const prog = s.progress ?? 1.0;
     if (spr && hasSprite(spr)) {
         if (prog < 1.0) ctx.globalAlpha = 0.4 + prog * 0.6;
         drawSprite(ctx, spr, 'idle', 0, (tx + w / 2) * TILE_SIZE, (ty + h) * TILE_SIZE);
         if (prog < 1.0) ctx.globalAlpha = 1.0;
+        else if (_isTier2(key, tx, ty)) _drawTier2BadgeFor(ctx, spr, tx, ty, w, h);
         return;
     }
     const assetKey = s.def.key === 'gate'
@@ -153,7 +326,10 @@ function _drawNatureTiny(ctx, assets, s, tx, ty, now) {
         else { ctx.fillStyle = '#6e7275'; ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE); }
         return;
     }
-    // iron_vein keeps its old sprite for now.
+    // Custom iron-vein art; old obstacle_iron below is only the fallback.
+    if (key === 'iron_vein') {
+        if (drawSprite(ctx, SPRITE_FOR.iron_vein, 'idle', 0, cx, by)) return;
+    }
     const asset = assets['obstacle_iron'];
     if (asset) ctx.drawImage(asset, tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
     else { ctx.fillStyle = '#b2b9c0'; ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE); }
@@ -773,9 +949,20 @@ export class GameGrid {
                     const inTerritory = Math.hypot(tx - 32, ty - 32) <= R;
                     const ok = placeable && affordable && inTerritory;
                     ctx.globalAlpha = 0.55;
-                    // Tiny Swords preview when one is mapped for this building.
+                    // Tiny Swords preview when one is mapped for this building
+                    // (walls/gates preview their single-tile look: wall_post /
+                    // gate_closed). Roads preview the sand autotile instead.
                     const ghostSpr = SPRITE_FOR[selectedTool];
-                    if (typeof ghostSpr === 'string' && hasSprite(ghostSpr)) {
+                    if (selectedTool === 'road' && hasTerrain()) {
+                        const isR = (x, y) => (x === tx && y === ty)
+                            || (this.inBounds(x, y) && this.tiles[y][x] === 'tile_road');
+                        ctx.save();
+                        ctx.imageSmoothingEnabled = true;
+                        ctx.imageSmoothingQuality = 'high';
+                        paintRoad(ctx, isR(tx, ty - 1), isR(tx + 1, ty),
+                            isR(tx, ty + 1), isR(tx - 1, ty), tx * TILE_SIZE, ty * TILE_SIZE);
+                        ctx.restore();
+                    } else if (typeof ghostSpr === 'string' && hasSprite(ghostSpr)) {
                         drawSprite(ctx, ghostSpr, 'idle', performance.now() / 1000,
                             (tx + w / 2) * TILE_SIZE, (ty + h) * TILE_SIZE);
                     } else {
@@ -1671,6 +1858,8 @@ function renderBuildMenu(tab) {
     itemsEl.querySelectorAll('canvas[data-asset]').forEach(cv => {
         // Tiny Swords icon when one is mapped for this tool, else the old icon.
         const tool = cv.closest('.build-btn')?.dataset.tool;
+        // Roads use the sand centre tile cropped from tilemap_flat.png.
+        if (tool === 'road' && hasTerrain() && drawRoadIcon(cv)) return;
         const spr = tool ? ICON_FOR[tool] : null;
         if (spr && hasSprite(spr) && drawSpriteIcon(cv, spr)) return;
         const key = cv.dataset.asset;
@@ -2335,6 +2524,9 @@ export function rebuildStructureLists() {
         activeRubble, activeBarracks, activeArcheryRanges,
         buildingCounts, jobfulStructures, underConstruction
     });
+    // Wall neighbour masks for the connected renderer (walls change rarely, so
+    // the per-frame pass just reads this cache).
+    _recomputeWallMasks();
     // Housing is derived so every destroy/demolish path stays correct:
     // 4 per house + 2 extra per tier-2 (Stone Cottage) house.
     let _t2Houses = 0;
@@ -2548,7 +2740,7 @@ Object.assign(window, {
 
     rebuildStructureLists, showExpansionBanner, _showExpansionBannerDOM, getAdjacencyBonus, getFoodCap,
     countBuildings, getScaledCost, calcDefense, calcHappiness, getSpawnInterval, formatTime,
-    _buildStaticCache, _staticCanvas, patchStaticCache,
+    _buildStaticCache, _staticCanvas, patchStaticCache, _recomputeWallMasks, _wallMaskAt,
 
     GameGrid, makeSeededRng, randomSeedString, openResearchModal, closeResearchModal, showDiplomacyModal, chooseDiplomacyOption,
     closeBuildingPanel, openBuildingPanel, updateResearchModalUI, startResearch, updateResearch,
